@@ -1,5 +1,5 @@
-import { ReportBoard } from "@/components/ReportBoard";
+import { OverviewView } from "@/components/report/OverviewView";
 
 export default function ReportPage() {
-  return <ReportBoard />;
+  return <OverviewView />;
 }

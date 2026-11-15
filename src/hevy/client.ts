@@ -12,6 +12,8 @@ export class HevyApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    /** Seconds, only when Hevy sends a Retry-After header. */
+    readonly retryAfter?: number,
   ) {
     super(message);
     this.name = "HevyApiError";
@@ -25,11 +27,13 @@ async function hevyFetch<T>(apiKey: string, path: string): Promise<T> {
   });
   if (!response.ok) {
     const body = await response.text().catch(() => "");
+    const retryAfter = Number(response.headers.get("retry-after"));
     throw new HevyApiError(
       response.status === 401
         ? "Hevy rejected that API key. Create a Pro key at hevy.com/settings?developer."
         : `Hevy ${path} failed (${response.status})${body ? `: ${body.slice(0, 180)}` : ""}`,
       response.status,
+      Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : undefined,
     );
   }
   return (await response.json()) as T;

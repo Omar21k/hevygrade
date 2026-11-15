@@ -19,13 +19,32 @@ export type ScoreSnapshot = {
 
 export type SuggestionKind = "add" | "swap" | "add_sets" | "cut_sets" | "move";
 
-export type Suggestion = {
-  id: string;
+/** A routine edit that can be re-applied to the original split in any combination. */
+export type PlannedChange =
+  | { op: "add"; dayId: string; exerciseId: string; sets: number }
+  | { op: "add_sets"; dayId: string; exerciseId: string; sets: number }
+  | { op: "swap"; dayId: string; fromId: string; toId: string; sets: number }
+  | { op: "cut_sets"; dayId: string; exerciseId: string; sets: number }
+  | { op: "move"; fromDayId: string; toDayId: string; exerciseId: string };
+
+export type ExerciseSlot = { name: string; sets: number };
+
+type CandidateDetail = {
   kind: SuggestionKind;
+  key: string;
   title: string;
-  reason: string;
   dayTitle: string;
   region?: RegionId;
+  reason: string;
+  change: PlannedChange;
+  current?: ExerciseSlot;
+  suggested?: ExerciseSlot;
+  /** Destination day for a move. */
+  toDayTitle?: string;
+};
+
+export type Suggestion = Omit<CandidateDetail, "key"> & {
+  id: string;
   before: ScoreSnapshot;
   after: ScoreSnapshot;
 };
@@ -36,15 +55,7 @@ export type Plan = {
   end: ScoreSnapshot;
 };
 
-type Candidate = {
-  kind: SuggestionKind;
-  key: string;
-  split: Split;
-  title: string;
-  dayTitle: string;
-  region?: RegionId;
-  reason: string;
-};
+type Candidate = CandidateDetail & { split: Split };
 
 const MAX_STEPS = 5;
 const MIN_GAIN = 0.08;
@@ -87,6 +98,53 @@ function workingCount(sets: PlannedSet[]): number {
   return sets.filter((set) => set.type !== "warmup").length;
 }
 
+function applyChange(split: Split, change: PlannedChange): void {
+  if (change.op === "move") {
+    const from = split.days.find((day) => day.id === change.fromDayId);
+    const to = split.days.find((day) => day.id === change.toDayId);
+    const index = from?.exercises.findIndex((item) => item.exerciseId === change.exerciseId) ?? -1;
+    if (!from || !to || index < 0) return;
+    const [moved] = from.exercises.splice(index, 1);
+    to.exercises.push(moved);
+    return;
+  }
+  const day = split.days.find((candidate) => candidate.id === change.dayId);
+  if (!day) return;
+  if (change.op === "add") {
+    if (day.exercises.some((item) => item.exerciseId === change.exerciseId)) return;
+    day.exercises.push({ exerciseId: change.exerciseId, sets: normalSets(change.sets) });
+    return;
+  }
+  const targetId = change.op === "swap" ? change.fromId : change.exerciseId;
+  const index = day.exercises.findIndex((item) => item.exerciseId === targetId);
+  if (index < 0) return;
+  const item = day.exercises[index];
+  if (change.op === "swap") {
+    day.exercises[index] = { exerciseId: change.toId, sets: normalSets(change.sets) };
+  } else if (change.op === "add_sets") {
+    item.sets.push(...normalSets(change.sets));
+  } else {
+    for (let removed = 0; removed < change.sets; removed += 1) {
+      const lastWorking = item.sets.map((set) => set.type).lastIndexOf("normal");
+      item.sets.splice(lastWorking >= 0 ? lastWorking : item.sets.length - 1, 1);
+    }
+  }
+}
+
+/**
+ * Applies changes to a copy of the split. A change whose target is already gone
+ * (for example, swapped by an earlier change) is skipped rather than guessed at.
+ */
+export function applyChanges(split: Split, changes: PlannedChange[]): Split {
+  const next = structuredClone(split);
+  for (const change of changes) applyChange(next, change);
+  return next;
+}
+
+function candidate(split: Split, detail: CandidateDetail): Candidate {
+  return { ...detail, split: applyChanges(split, [detail.change]) };
+}
+
 function primaryRegion(def: ExerciseDef): RegionId | undefined {
   return def.stimulus
     .filter((stim) => stim.role === "primary")
@@ -115,10 +173,10 @@ function needReason(row: RegionBreakdown): string {
   const verb = regionVerb(row.region);
   const range = `${row.targetLow}–${row.targetHigh}`;
   if (row.priority === "lagging" && !row.hasPrimary) {
-    return `${name} ${verb} lagging, and nothing in your split trains ${verb === "are" ? "them" : "it"} directly.`;
+    return `${name} ${verb} a priority, and nothing in your split trains ${verb === "are" ? "them" : "it"} directly.`;
   }
   if (row.priority === "lagging") {
-    return `${name} ${verb} lagging and ${verb === "are" ? "get" : "gets"} ${row.effectiveSets} effective sets a week. Lagging tissue needs about ${range}.`;
+    return `${name} ${verb} a priority and ${verb === "are" ? "get" : "gets"} ${row.effectiveSets} effective sets a week. The target for a priority is about ${range}.`;
   }
   return `${name} ${verb === "are" ? "get" : "gets"} ${row.effectiveSets} effective sets a week, under the ${range} range.`;
 }
@@ -201,24 +259,26 @@ function candidates(split: Split, grade: Grade): Candidate[] {
   const targetSet = new Set(targets.map((row) => row.region));
 
   split.days.forEach((day, dayIndex) => {
-    day.exercises.forEach((item, itemIndex) => {
+    day.exercises.forEach((item) => {
       const def = getExercise(item.exerciseId);
       const primary = primaryRegion(def);
       const count = workingCount(item.sets);
 
       if (primary && targetSet.has(primary)) {
         const row = targets.find((target) => target.region === primary)!;
-        const next = structuredClone(split);
-        next.days[dayIndex].exercises[itemIndex].sets.push(...normalSets(2));
-        out.push({
-          kind: "add_sets",
-          key: `${day.id}:${item.exerciseId}`,
-          split: next,
-          title: `Add 2 sets of ${def.name} on ${day.title}`,
-          dayTitle: day.title,
-          region: primary,
-          reason: `${needReason(row)} You already do ${def.name}, so this is the cheapest fix.`,
-        });
+        out.push(
+          candidate(split, {
+            kind: "add_sets",
+            key: `${day.id}:${item.exerciseId}`,
+            title: `Add 2 sets of ${def.name} on ${day.title}`,
+            dayTitle: day.title,
+            region: primary,
+            reason: `${needReason(row)} You already do ${def.name}, so this is the cheapest fix.`,
+            change: { op: "add_sets", dayId: day.id, exerciseId: item.exerciseId, sets: 2 },
+            current: { name: def.name, sets: count },
+            suggested: { name: def.name, sets: count + 2 },
+          }),
+        );
       }
 
       if (primary) {
@@ -231,20 +291,20 @@ function candidates(split: Split, grade: Grade): Candidate[] {
           for (const option of optionsFor(row.region)) {
             if (Math.abs(FATIGUE_RANK[option.fatigue] - FATIGUE_RANK[def.fatigue]) > 1) continue;
             if (dayHas(split, dayIndex, option.id)) continue;
-            const next = structuredClone(split);
-            next.days[dayIndex].exercises[itemIndex] = {
-              exerciseId: option.id,
-              sets: normalSets(Math.max(count, 2)),
-            };
-            out.push({
-              kind: "swap",
-              key: `${day.id}:${item.exerciseId}`,
-              split: next,
-              title: `Swap ${def.name} for ${option.name} on ${day.title}`,
-              dayTitle: day.title,
-              region: row.region,
-              reason: `${needReason(row)} ${def.name} is hitting ${lower(primary)} instead. Same ${count} sets, same session length, aimed at the part that's behind.`,
-            });
+            const sets = Math.max(count, 2);
+            out.push(
+              candidate(split, {
+                kind: "swap",
+                key: `${day.id}:${item.exerciseId}`,
+                title: `Swap ${def.name} for ${option.name} on ${day.title}`,
+                dayTitle: day.title,
+                region: row.region,
+                reason: `${needReason(row)} ${def.name} is hitting ${lower(primary)} instead. Same ${count} sets, same session length, aimed at the part that's behind.`,
+                change: { op: "swap", dayId: day.id, fromId: item.exerciseId, toId: option.id, sets },
+                current: { name: def.name, sets: count },
+                suggested: { name: option.name, sets },
+              }),
+            );
           }
         }
       }
@@ -255,45 +315,46 @@ function candidates(split: Split, grade: Grade): Candidate[] {
       if (!hostsGroup(split, dayIndex, row.region)) continue;
       for (const option of optionsFor(row.region)) {
         if (dayHas(split, dayIndex, option.id)) continue;
-        const next = structuredClone(split);
-        next.days[dayIndex].exercises.push({ exerciseId: option.id, sets: normalSets(3) });
-        out.push({
-          kind: "add",
-          key: `${day.id}:${option.id}`,
-          split: next,
-          title: `Add ${option.name} (3 sets) to ${day.title}`,
-          dayTitle: day.title,
-          region: row.region,
-          reason: needReason(row),
-        });
+        out.push(
+          candidate(split, {
+            kind: "add",
+            key: `${day.id}:${option.id}`,
+            title: `Add ${option.name} (3 sets) to ${day.title}`,
+            dayTitle: day.title,
+            region: row.region,
+            reason: needReason(row),
+            change: { op: "add", dayId: day.id, exerciseId: option.id, sets: 3 },
+            suggested: { name: option.name, sets: 3 },
+          }),
+        );
       }
     }
   });
 
   for (const row of surplusRegions(grade)) {
-    split.days.forEach((day, dayIndex) => {
-      day.exercises.forEach((item, itemIndex) => {
+    split.days.forEach((day) => {
+      day.exercises.forEach((item) => {
         const def = getExercise(item.exerciseId);
         if (primaryRegion(def) !== row.region) return;
         const count = workingCount(item.sets);
         if (count < 3) return;
-        const next = structuredClone(split);
-        const sets = next.days[dayIndex].exercises[itemIndex].sets;
-        const lastWorking = sets.map((set) => set.type).lastIndexOf("normal");
-        sets.splice(lastWorking >= 0 ? lastWorking : sets.length - 1, 1);
         const why =
           row.effectiveSets > row.mrv
             ? `${label(row.region)} ${regionVerb(row.region) === "are" ? "get" : "gets"} ${row.effectiveSets} effective sets a week, past what you can recover from (about ${row.mrv}).`
             : `${label(row.region)} already ${regionVerb(row.region) === "are" ? "look" : "looks"} ahead of the rest of your physique, so these sets are better spent elsewhere.`;
-        out.push({
-          kind: "cut_sets",
-          key: `${day.id}:${item.exerciseId}`,
-          split: next,
-          title: `Cut ${def.name} on ${day.title} from ${count} to ${count - 1} sets`,
-          dayTitle: day.title,
-          region: row.region,
-          reason: why,
-        });
+        out.push(
+          candidate(split, {
+            kind: "cut_sets",
+            key: `${day.id}:${item.exerciseId}`,
+            title: `Cut ${def.name} on ${day.title} from ${count} to ${count - 1} sets`,
+            dayTitle: day.title,
+            region: row.region,
+            reason: why,
+            change: { op: "cut_sets", dayId: day.id, exerciseId: item.exerciseId, sets: 1 },
+            current: { name: def.name, sets: count },
+            suggested: { name: def.name, sets: count - 1 },
+          }),
+        );
       });
     });
   }
@@ -302,23 +363,26 @@ function candidates(split: Split, grade: Grade): Candidate[] {
     const b = a + 1;
     for (const region of HEAVY_REGIONS) {
       if (primarySetsOnDay(split, a, region) < 2 || primarySetsOnDay(split, b, region) < 2) continue;
-      split.days[b].exercises.forEach((item, itemIndex) => {
+      split.days[b].exercises.forEach((item) => {
         const def = getExercise(item.exerciseId);
         if (primaryRegion(def) !== region) return;
+        const count = workingCount(item.sets);
         split.days.forEach((target, targetIndex) => {
           if (Math.abs(targetIndex - b) <= 1) return;
-          const next = structuredClone(split);
-          const [moved] = next.days[b].exercises.splice(itemIndex, 1);
-          next.days[targetIndex].exercises.push(moved);
-          out.push({
-            kind: "move",
-            key: `${split.days[b].id}:${item.exerciseId}`,
-            split: next,
-            title: `Move ${def.name} from ${split.days[b].title} to ${target.title}`,
-            dayTitle: split.days[b].title,
-            region,
-            reason: `${split.days[a].title} and ${split.days[b].title} both train ${lower(region)} hard on back-to-back days. Moving it gives that tissue time to recover before you load it again.`,
-          });
+          out.push(
+            candidate(split, {
+              kind: "move",
+              key: `${split.days[b].id}:${item.exerciseId}`,
+              title: `Move ${def.name} from ${split.days[b].title} to ${target.title}`,
+              dayTitle: split.days[b].title,
+              toDayTitle: target.title,
+              region,
+              reason: `${split.days[a].title} and ${split.days[b].title} both train ${lower(region)} hard on back-to-back days. Moving it gives that tissue time to recover before you load it again.`,
+              change: { op: "move", fromDayId: split.days[b].id, toDayId: target.id, exerciseId: item.exerciseId },
+              current: { name: def.name, sets: count },
+              suggested: { name: def.name, sets: count },
+            }),
+          );
         });
       });
     }
@@ -350,19 +414,19 @@ export function buildPlan(input: ScoreInput, maxSteps = MAX_STEPS): Plan {
     const baseBalance = balanceScore(before);
     let best: { candidate: Candidate; grade: Grade; gain: number } | undefined;
 
-    for (const candidate of candidates(split, grade)) {
-      if (touched.has(candidate.key)) continue;
-      const aim = aimKey(candidate);
+    for (const option of candidates(split, grade)) {
+      if (touched.has(option.key)) continue;
+      const aim = aimKey(option);
       if (aim && aimed.has(aim)) continue;
-      const nextGrade = gradeSplit({ ...input, split: candidate.split });
+      const nextGrade = gradeSplit({ ...input, split: option.split });
       const after = snapshot(nextGrade);
       const dropped = (["coverage", "growth", "recovery"] as const).some(
         (metric) => before[metric] - after[metric] > MAX_METRIC_DROP,
       );
       if (dropped) continue;
-      const gain = balanceScore(after) - baseBalance - KIND_COST[candidate.kind];
+      const gain = balanceScore(after) - baseBalance - KIND_COST[option.kind];
       if (gain < MIN_GAIN) continue;
-      if (!best || gain > best.gain) best = { candidate, grade: nextGrade, gain };
+      if (!best || gain > best.gain) best = { candidate: option, grade: nextGrade, gain };
     }
 
     if (!best) break;
@@ -371,13 +435,11 @@ export function buildPlan(input: ScoreInput, maxSteps = MAX_STEPS): Plan {
     if (aim) aimed.add(aim);
     split = best.candidate.split;
     grade = best.grade;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { key, split: _applied, ...detail } = best.candidate;
     steps.push({
-      id: `${best.candidate.kind}-${best.candidate.key}-${step}`,
-      kind: best.candidate.kind,
-      title: best.candidate.title,
-      reason: best.candidate.reason,
-      dayTitle: best.candidate.dayTitle,
-      region: best.candidate.region,
+      ...detail,
+      id: `${best.candidate.kind}-${key}-${step}`,
       before,
       after: snapshot(grade),
     });

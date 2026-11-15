@@ -1,5 +1,10 @@
-import { RegionsBoard } from "@/components/RegionsBoard";
+import { RegionsView } from "@/components/report/RegionsView";
+import { Suspense } from "react";
 
 export default function RegionsPage() {
-  return <RegionsBoard />;
+  return (
+    <Suspense fallback={<p className="text-ink-2">Loading regions…</p>}>
+      <RegionsView />
+    </Suspense>
+  );
 }

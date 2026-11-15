@@ -52,7 +52,7 @@ export function lagMapFromPhysique(assessment: PhysiqueAssessment): {
         metric: "coverage",
         severity: row.development <= 2 ? "blocker" : "warn",
         region: row.region,
-        title: `${REGION_META[row.region].label} ${regionVerb(row.region)} lagging in your photos`,
+        title: `${REGION_META[row.region].label} ${regionVerb(row.region) === "are" ? "look" : "looks"} behind in your photos`,
         detail:
           row.note?.trim() ||
           `Development ${row.development.toFixed(1)}/5 vs physique baseline ${baseline.toFixed(1)}. The split will be scored against this lag, not generic muscle coverage.`,

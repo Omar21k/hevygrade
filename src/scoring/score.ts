@@ -9,6 +9,7 @@ import {
 import type {
   Finding,
   Grade,
+  GrowthParts,
   RegionBreakdown,
   ScoreInput,
 } from "./types";
@@ -84,8 +85,8 @@ function scoreCoverage(
         metric: "coverage",
         severity: row.effectiveSets < 2 ? "blocker" : "warn",
         region: row.region,
-        title: `${row.label} ${regionVerb(row.region)} lagging and under-trained`,
-        detail: `${row.effectiveSets} effective sets/week vs a lagging target of ${row.targetLow}–${row.targetHigh}. ${
+        title: `${row.label} ${regionVerb(row.region)} a priority but under-trained`,
+        detail: `${row.effectiveSets} effective sets/week vs a priority target of ${row.targetLow}–${row.targetHigh}. ${
           needsPrimary
             ? "Nothing in the split is a primary movement for this region."
             : "The movement is present but weekly volume is too low."
@@ -148,7 +149,7 @@ function siblingRedundancyFindings(regions: RegionBreakdown[]): Finding[] {
 function scoreGrowth(
   input: ScoreInput,
   regions: RegionBreakdown[],
-): { score: number; findings: Finding[]; notes: string[]; capped: boolean } {
+): { score: number; findings: Finding[]; notes: string[]; capped: boolean; parts: GrowthParts } {
   const findings: Finding[] = [];
   const notes: string[] = [];
   const lagging = regions.filter((row) => row.priority === "lagging");
@@ -229,6 +230,12 @@ function scoreGrowth(
     findings,
     notes,
     capped,
+    parts: {
+      volume: round1(volumePts),
+      frequency: round1(freqPts),
+      selection: round1(selectionPts),
+      progression: usedHistory ? round1(progressionPts) : null,
+    },
   };
 }
 
@@ -418,7 +425,7 @@ export function gradeSplit(input: ScoreInput): Grade {
 
   return {
     coverage: { score: coverage.score, notes: coverage.notes },
-    growth: { score: growth.score, notes: growth.notes },
+    growth: { score: growth.score, notes: growth.notes, parts: growth.parts },
     recovery: { score: recovery.score, notes: recovery.notes },
     overall,
     regions,

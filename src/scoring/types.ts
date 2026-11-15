@@ -93,9 +93,17 @@ export type MetricScore = {
   notes: string[];
 };
 
+/** Growth components. Max: volume 4, frequency 2, selection 2, progression 2 (null without history). */
+export type GrowthParts = {
+  volume: number;
+  frequency: number;
+  selection: number;
+  progression: number | null;
+};
+
 export type Grade = {
   coverage: MetricScore;
-  growth: MetricScore;
+  growth: MetricScore & { parts: GrowthParts };
   recovery: MetricScore;
   overall: number;
   regions: RegionBreakdown[];

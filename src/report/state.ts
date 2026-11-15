@@ -10,9 +10,17 @@ export type PhysiqueResult = {
   views: PhysiqueView[];
 };
 
+export type PlanChoices = {
+  selected: string[];
+  dismissed: string[];
+};
+
 const PHYSIQUE_KEY = "hevygrade.physique";
 const OVERRIDES_KEY = "hevygrade.lagOverrides";
+const PLAN_KEY = "hevygrade.planChoices";
+const REVEAL_KEY = "hevygrade.revealSeen";
 const NO_OVERRIDES: LagMap = Object.freeze({});
+export const NO_CHOICES: PlanChoices = Object.freeze({ selected: [], dismissed: [] }) as PlanChoices;
 
 export function loadPhysique(): PhysiqueResult | null {
   return readSessionJson<PhysiqueResult>(PHYSIQUE_KEY);
@@ -32,4 +40,25 @@ export function loadLagOverrides(): LagMap {
 
 export function saveLagOverrides(overrides: LagMap) {
   writeSessionJson(OVERRIDES_KEY, overrides);
+}
+
+export function loadPlanChoices(): PlanChoices {
+  return readSessionJson<PlanChoices>(PLAN_KEY) ?? NO_CHOICES;
+}
+
+export function savePlanChoices(choices: PlanChoices) {
+  writeSessionJson(PLAN_KEY, choices);
+}
+
+export function loadRevealSeen(): boolean {
+  return readSessionJson<boolean>(REVEAL_KEY) ?? false;
+}
+
+export function markRevealSeen() {
+  writeSessionJson(REVEAL_KEY, true);
+}
+
+/** Inputs changed, so the old reveal, selections and goal edits no longer describe this report. */
+export function resetReportProgress() {
+  removeSessionKeys(PLAN_KEY, REVEAL_KEY);
 }

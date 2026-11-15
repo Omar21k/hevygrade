@@ -14,8 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Hevygrade",
-  description:
-    "Validate an existing Hevy split against your physique: coverage, growth, and recovery.",
+  description: "Understand your training. Know what to change next.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
@@ -24,7 +23,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="flex min-h-full flex-col bg-[#07080a]">{children}</body>
+      <body className="flex min-h-full flex-col bg-bg text-ink">{children}</body>
     </html>
   );
 }

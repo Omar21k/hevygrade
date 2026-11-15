@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { fixtures } from "./fixtures";
-import { balanceScore, buildPlan } from "./suggest";
+import { gradeSplit } from "./score";
+import { applyChanges, balanceScore, buildPlan, snapshot } from "./suggest";
 
 describe("buildPlan", () => {
   it("fixes missing brachialis work with a hammer curl instead of more supinated curls", () => {
@@ -56,6 +57,19 @@ describe("buildPlan", () => {
       .filter((step) => step.kind !== "cut_sets" && step.kind !== "move")
       .map((step) => `${step.dayTitle}:${step.region}`);
     expect(new Set(aims).size).toBe(aims.length);
+  });
+
+  it("records changes that replay onto the original split to the same scores", () => {
+    const input = {
+      split: fixtures.laggingUpperChest,
+      lagMap: { chest_upper: "lagging", lats: "lagging" } as const,
+    };
+    const plan = buildPlan(input);
+    const replayed = gradeSplit({
+      ...input,
+      split: applyChanges(input.split, plan.steps.map((step) => step.change)),
+    });
+    expect(snapshot(replayed)).toEqual(plan.end);
   });
 
   it("does not mutate the caller's split", () => {

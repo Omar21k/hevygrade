@@ -1,29 +1,113 @@
 @import "tailwindcss";
 
 :root {
-  --background: #07080a;
-  --foreground: #f4f4f5;
-  --hevy-blue: #267fe8;
-  --hevy-mint: #c7fda0;
+  --bg: #0b0d10;
+  --surface: #12161c;
+  --surface-raised: #191f27;
+  --border: #2a323d;
+  --text: #f2f4f7;
+  --text-secondary: #b0b9c6;
+  --text-muted: #929eae;
+  --blue: #4f8cff;
+  --blue-hover: #72a3ff;
+  --yellow: #f2cf66;
+  --mint: #88ddbb;
+  --red: #f19b9b;
+  --brand: #ddf5a1;
+  --radius-card: 16px;
+  --radius-control: 10px;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-raised: var(--surface-raised);
+  --color-line: var(--border);
+  --color-ink: var(--text);
+  --color-ink-2: var(--text-secondary);
+  --color-ink-3: var(--text-muted);
+  --color-accent: var(--blue);
+  --color-accent-hover: var(--blue-hover);
+  --color-warn: var(--yellow);
+  --color-good: var(--mint);
+  --color-bad: var(--red);
+  --color-brand: var(--brand);
+  --radius-card: var(--radius-card);
+  --radius-control: var(--radius-control);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
+html {
+  color-scheme: dark;
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans), Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 26px;
+}
+
+:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.hg-h1 {
+  font-size: 28px;
+  line-height: 36px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.hg-h2 {
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 600;
+}
+
+.hg-eyebrow {
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.hg-score {
+  font-size: 40px;
+  line-height: 48px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (min-width: 768px) {
+  .hg-h1 {
+    font-size: 36px;
+    line-height: 44px;
+  }
+  .hg-h2 {
+    font-size: 22px;
+    line-height: 30px;
+  }
+  .hg-score {
+    font-size: 48px;
+    line-height: 56px;
+  }
+}
+
+dialog::backdrop {
+  background: rgb(5 6 8 / 0.72);
 }
 
 @keyframes hg-rise {
   from {
     opacity: 0;
-    transform: translateY(14px);
+    transform: translateY(8px);
   }
   to {
     opacity: 1;
@@ -31,45 +115,25 @@ body {
   }
 }
 
-@keyframes hg-scan {
-  from {
-    transform: translateX(-100%);
-  }
+@keyframes hg-spin {
   to {
-    transform: translateX(260%);
-  }
-}
-
-@keyframes hg-pop {
-  0% {
-    transform: scale(0.92);
-    opacity: 0;
-  }
-  60% {
-    transform: scale(1.04);
-    opacity: 1;
-  }
-  100% {
-    transform: scale(1);
+    transform: rotate(360deg);
   }
 }
 
 .hg-rise {
-  animation: hg-rise 0.55s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  animation: hg-rise 0.4s cubic-bezier(0.2, 0.7, 0.2, 1) both;
 }
 
-.hg-pop {
-  animation: hg-pop 0.6s cubic-bezier(0.2, 0.7, 0.2, 1) both;
-}
-
-.hg-scan {
-  animation: hg-scan 1.1s ease-in-out infinite;
+.hg-spin {
+  animation: hg-spin 0.9s linear infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .hg-rise,
-  .hg-pop,
-  .hg-scan {
+  .hg-rise {
     animation: none;
+  }
+  .hg-spin {
+    animation-duration: 2.4s;
   }
 }

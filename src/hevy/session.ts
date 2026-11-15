@@ -9,6 +9,10 @@ export type HevyPayload = {
   unmatched: string[];
   days: { id: string; title: string; movements: number }[];
   workoutCount: number;
+  /** ISO time the data was imported (or the demo was opened). */
+  importedAt?: string;
+  /** Fixture data, not a real Hevy account. */
+  demo?: boolean;
 };
 
 const KEY = "hevygrade.hevy";

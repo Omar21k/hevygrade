@@ -1,5 +1,5 @@
-import { ConnectHevy } from "@/components/ConnectHevy";
+import { ConnectScreen } from "@/components/setup/ConnectScreen";
 
 export default function ConnectPage() {
-  return <ConnectHevy />;
+  return <ConnectScreen />;
 }
