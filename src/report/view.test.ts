@@ -51,11 +51,15 @@ describe("combined photo + training read", () => {
     for (const row of trainingOnly) expect(row.assessment).toMatch(/photos|Hevy|routines/i);
   });
 
-  it("keeps photo-lagging muscles out of the strength summary", () => {
-    const { regions, grade } = report(physique);
-    const text = strengthLines(regions, grade).join(" ").toLowerCase();
-    expect(text).not.toContain("lats");
-    expect(text.length).toBeGreaterThan(10);
+  it("praises muscles the photos score as strong, and skips ones they score as behind", () => {
+    const withDelts = photosFlagging(["lats"]);
+    withDelts.assessment!.developments = withDelts.assessment!.developments.map((row) =>
+      row.region === "delt_side" ? { ...row, development: 4.6 } : row,
+    );
+    const text = strengthLines(withDelts).join(" ");
+    expect(text).toBe("Delts look full and strong.");
+    expect(text.toLowerCase()).not.toContain("lats");
+    expect(text.toLowerCase()).not.toMatch(/sets|week|routine/);
   });
 
   it("says what's lacking is the photo muscle, and does not mention glutes or training-only gaps", () => {

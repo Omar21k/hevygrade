@@ -43,7 +43,7 @@ export function PreparingScreen() {
     const started = performance.now();
     let timer = 0;
     timer = window.setInterval(
-      () => setStep((current) => Math.min(current + 1, LINES.length - 1)),
+      () => setStep((current) => (current + 1) % LINES.length),
       reduced ? 40 : STEP_MS,
     );
 
@@ -90,7 +90,7 @@ export function PreparingScreen() {
     };
   }, [router]);
 
-  const shown = LINES.slice(0, step + 1);
+  const line = LINES[step];
 
   return (
     <div className="flex min-h-full flex-1 flex-col">
@@ -112,21 +112,9 @@ export function PreparingScreen() {
           <>
             <h1 className="sr-only">Analyzing your photos</h1>
             <p className="hg-eyebrow">Putting your report together</p>
-            <ul className="mt-6 flex flex-col gap-3" aria-live="polite">
-              {shown.map((line, index) => {
-                const current = index === shown.length - 1;
-                return (
-                  <li
-                    key={line}
-                    className={`text-[22px] font-medium leading-[30px] ${current ? "text-ink" : "text-ink-3"}`}
-                  >
-                    {current ? <span className="mr-2 inline-block h-2 w-2 rounded-full bg-accent align-middle" /> : null}
-                    {line}
-                    {current ? "…" : ""}
-                  </li>
-                );
-              })}
-            </ul>
+            <p key={line} className="hg-swap mt-6 min-h-[36px] text-[26px] font-medium leading-[34px] text-ink" aria-live="polite">
+              {line}…
+            </p>
             <div className="relative mt-8 h-1 w-full max-w-[240px] overflow-hidden rounded-full bg-line">
               <div className="hg-scan absolute inset-y-0 w-1/3 rounded-full bg-accent" />
             </div>

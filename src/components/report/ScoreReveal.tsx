@@ -190,7 +190,7 @@ export function ScoreReveal() {
 
   const readyData = report.status === "ready" ? report.data : null;
   const lines = useMemo(
-    () => (readyData ? strengthLines(readyData.regions, readyData.grade) : []),
+    () => (readyData ? strengthLines(readyData.physique) : []),
     [readyData],
   );
 

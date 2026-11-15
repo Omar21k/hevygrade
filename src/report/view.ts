@@ -825,40 +825,58 @@ export function overviewHeadline(overall: number): string {
   return "Plenty of room to grow. Start with one change.";
 }
 
-/** A few true positives, typed before the scores. Never invents a strength the data doesn't show. */
-export function strengthLines(regions: RegionView[], grade: Grade): string[] {
-  const lines: string[] = [];
-  const solid = regions
+/** Visual compliments from the photo read. Delts share one line. */
+const PHOTO_PRAISE: Partial<Record<RegionId, string>> = {
+  chest_upper: "Upper chest has a real shelf to it.",
+  chest_mid: "Chest looks full and strong.",
+  chest_lower: "Lower chest looks full.",
+  lats: "Lats look wide from the back.",
+  upper_back: "Upper back looks thick and strong.",
+  delt_front: "Delts look full and strong.",
+  delt_side: "Delts look full and strong.",
+  delt_rear: "Delts look full and strong.",
+  biceps: "Arms look full from the front.",
+  triceps: "Arms look developed from the side.",
+  brachialis: "Arms look thick from the front.",
+  quads: "Quads look full and strong.",
+  hamstrings: "Hamstrings look developed from the side.",
+};
+
+/**
+ * What already looks good in the photos, before the scores. Training volume
+ * does not count as a compliment here.
+ */
+export function strengthLines(physique: PhysiqueResult | null): string[] {
+  if (!physique || physique.status !== "graded" || !physique.assessment) {
+    return ["No photos this time, so this stays quiet. The scores come from your routines."];
+  }
+  const rows = physique.assessment.developments.filter(
+    (row) => row.confidence >= 0.55 && Number.isFinite(row.development) && PHOTO_PRAISE[row.region],
+  );
+  const baseline =
+    rows.length === 0 ? 3 : rows.reduce((sum, row) => sum + row.development, 0) / rows.length;
+  const strong = rows
     .filter(
       (row) =>
-        MAJOR_PHYSIQUE_REGIONS.includes(row.id) &&
-        row.status !== "below-target" &&
-        row.verdict !== "both" &&
-        row.verdict !== "photo-gap",
+        physique.lagMap[row.region] !== "lagging" &&
+        row.development >= 3.4 &&
+        row.development >= baseline + 0.35,
     )
-    .sort((a, b) => b.effectiveSets - a.effectiveSets)
-    .slice(0, 2);
-  if (solid.length > 0) {
-    const names = joinNames(solid.map((row) => row.name.toLowerCase()));
-    const plural = solid.length > 1 || regionVerb(solid[0].id) === "are";
-    lines.push(`Your ${names} ${plural ? "are" : "is"} already getting the work ${plural ? "they need" : "it needs"}.`);
-  }
-  if (grade.recovery.score >= 8) {
-    lines.push("Your week leaves room between hard sessions instead of stacking them.");
-  } else if (grade.growth.score >= 7 && grade.growth.parts.progression !== null && grade.growth.parts.progression >= 1) {
-    lines.push("Your logged lifts have been moving, not just sitting still.");
-  } else if (grade.growth.score >= 7) {
-    lines.push("The structure of your training already supports progression.");
-  }
-  const ahead = regions.find((row) => row.verdict === "ahead" && userCares(row));
-  if (ahead && lines.length < 3) {
-    const plural = regionVerb(ahead.id) === "are";
-    lines.push(`${ahead.name} already ${plural ? "stand" : "stands"} out in your photos.`);
+    .sort((a, b) => b.development - a.development);
+
+  const lines: string[] = [];
+  const used = new Set<string>();
+  for (const row of strong) {
+    const line = PHOTO_PRAISE[row.region];
+    if (!line || used.has(line)) continue;
+    used.add(line);
+    lines.push(line);
+    if (lines.length === 2) break;
   }
   if (lines.length === 0) {
-    lines.push("You have a full split saved in Hevy. That's a real base to build on.");
+    return ["Nothing in the photos stands out ahead of the rest. The scores get into where the work goes."];
   }
-  return lines.slice(0, 3);
+  return lines;
 }
 
 export function overviewSubline(regions: RegionView[]): string {
