@@ -10,6 +10,7 @@ import type {
   Finding,
   Grade,
   GrowthParts,
+  HistorySet,
   RegionBreakdown,
   ScoreInput,
 } from "./types";
@@ -250,13 +251,30 @@ function setStrength(weightKg: number | undefined, reps: number): number {
 }
 
 /**
+ * Progression reads a recent block, not all-time: over years of history almost
+ * every lift trends up, which says nothing about the current program.
+ */
+export const PROGRESSION_WINDOW_DAYS = 84;
+
+/** Sets within PROGRESSION_WINDOW_DAYS of the most recent logged set. */
+export function recentHistory(history: HistorySet[]): HistorySet[] {
+  const latest = history.reduce((max, set) => (set.date > max ? set.date : max), "");
+  if (!latest) return history;
+  const cutoff = new Date(`${latest.slice(0, 10)}T00:00:00Z`);
+  cutoff.setUTCDate(cutoff.getUTCDate() - PROGRESSION_WINDOW_DAYS);
+  const from = cutoff.toISOString().slice(0, 10);
+  return history.filter((set) => set.date.slice(0, 10) >= from);
+}
+
+/**
  * Trend per exercise: best set of each session, earliest third of sessions vs
- * latest third. Compared per exercise so rotating movements isn't read as
- * regression. Exercises in the current split are preferred when they have data.
+ * latest third, within the recent window. Compared per exercise so rotating
+ * movements isn't read as regression. Exercises in the current split are
+ * preferred when they have data.
  */
 function estimateProgression(input: ScoreInput): number {
   const sessionsByExercise = new Map<string, Map<string, number>>();
-  for (const set of input.history ?? []) {
+  for (const set of recentHistory(input.history ?? [])) {
     if (set.type === "warmup" || !set.reps || set.reps <= 0) continue;
     const strength = setStrength(set.weightKg, set.reps);
     const sessions = sessionsByExercise.get(set.exerciseId) ?? new Map<string, number>();

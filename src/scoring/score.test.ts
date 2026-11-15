@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { fixtures } from "./fixtures";
-import { gradeSplit } from "./score";
+import { gradeSplit, recentHistory } from "./score";
 
 describe("gradeSplit", () => {
   it("penalizes supinated-only arm work when the front of the arm is lagging", () => {
@@ -123,6 +123,29 @@ describe("gradeSplit", () => {
       history: history.map((set) => ({ ...set, weightKg: 200 - (set.weightKg ?? 0) })),
     });
     expect(grade.growth.score).toBeGreaterThan(regressing.growth.score);
+  });
+
+  it("reads progression from the recent block, not all-time history", () => {
+    const set = (date: string, weightKg: number) => ({
+      date,
+      exerciseId: "barbell_bench_press",
+      weightKg,
+      reps: 8,
+      type: "normal" as const,
+    });
+    // A year ago bench went 60 → 100 kg; the last 12 weeks it has slid back.
+    const old = ["2025-06-01", "2025-07-01", "2025-08-01", "2025-09-01"].map((date, i) => set(date, 60 + i * 13));
+    const recent = ["2026-09-01", "2026-09-15", "2026-10-01", "2026-10-15", "2026-11-01"].map((date, i) =>
+      set(date, 100 - i * 4),
+    );
+    const history = [...old, ...recent];
+
+    expect(recentHistory(history)).toHaveLength(recent.length);
+    const split = fixtures.upperChestWithVolume;
+    const allTime = gradeSplit({ split, lagMap: {}, history });
+    const recentOnly = gradeSplit({ split, lagMap: {}, history: recent });
+    expect(allTime.growth.parts.progression).toBe(recentOnly.growth.parts.progression);
+    expect(allTime.growth.parts.progression).toBe(0);
   });
 
   it("drops recovery when the same heavy region is trained on consecutive days", () => {

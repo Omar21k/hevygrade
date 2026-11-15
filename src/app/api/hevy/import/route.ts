@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { fetchHevyAccount, HevyApiError } from "@/hevy/client";
 import { routinesToSplit, workoutsToHistory } from "@/hevy/map";
+import { recentHistory } from "@/scoring";
 
 export const runtime = "nodejs";
 
@@ -18,18 +19,26 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { user, routines, templates, workouts } = await fetchHevyAccount(apiKey);
+    const { user, routines, templates, workouts, workoutsTruncated } = await fetchHevyAccount(apiKey);
     const { split, unmatched, exercises } = routinesToSplit(routines, templates);
-    const history = workoutsToHistory(workouts);
+    const fullHistory = workoutsToHistory(workouts);
     const name = user.name ?? user.username ?? "Hevy athlete";
+    const dates = workouts
+      .map((workout) => (workout.start_time ?? workout.end_time ?? "").slice(0, 10))
+      .filter(Boolean)
+      .sort();
 
     return NextResponse.json({
       user: { name, id: user.id },
       routineCount: routines.length,
       workoutCount: workouts.length,
+      workoutsTruncated,
+      firstWorkoutAt: dates[0],
+      lastWorkoutAt: dates[dates.length - 1],
       split,
       exercises,
-      history,
+      // Only the window progression reads; keeps session storage small for long histories.
+      history: recentHistory(fullHistory),
       unmatched,
       days: split.days.map((day) => ({
         id: day.id,

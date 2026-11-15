@@ -3,7 +3,9 @@ import {
   applyChanges,
   buildPlan,
   gradeSplit,
+  MAJOR_PHYSIQUE_REGIONS,
   priorityWeight,
+  PROGRESSION_WINDOW_DAYS,
   REGION_META,
   regionVerb,
   snapshot,
@@ -38,8 +40,6 @@ export const METRIC_PROMPT: Record<Metric, string> = {
   recovery: "How balanced is your recorded training load?",
 };
 
-/** Only the last 80 workouts are imported (10 per page × 8 pages in the Hevy client). */
-export const MAX_IMPORTED_WORKOUTS = 80;
 
 // ---------------------------------------------------------------------------
 // Score status
@@ -109,6 +109,9 @@ export type PhotoContext =
  * don't flag it. "photo-gap": looks behind, but volume is already on target.
  */
 export type Verdict = "both" | "training-gap" | "photo-gap" | "on-track" | "ahead";
+
+/** A shortfall in a big visible muscle (lats, quads) ranks ahead of the same shortfall in abs or forearms. */
+const MAJOR_REGION_WEIGHT = 1.5;
 
 const VERDICT_RANK: Record<Verdict, number> = {
   both: 0,
@@ -319,7 +322,11 @@ export function buildRegionViews(input: {
     const photo = photoContext(row.region, physique);
     return {
       ...assessRegion(row, photo, goalSource),
-      drag: round1(priorityWeight(row.priority) * Math.max(0, 10 - row.coverageScore)),
+      drag: round1(
+        priorityWeight(row.priority) *
+          (MAJOR_PHYSIQUE_REGIONS.includes(row.region) ? MAJOR_REGION_WEIGHT : 1) *
+          Math.max(0, 10 - row.coverageScore),
+      ),
       id: row.region,
       name: row.label,
       bodyArea: GROUP_AREA[REGION_META[row.region].group] ?? "Core",
@@ -362,7 +369,7 @@ export function compareRegions(a: RegionView, b: RegionView): number {
   return rankRegions(a, b);
 }
 
-export function focusRegions(regions: RegionView[], limit = 3): RegionView[] {
+export function focusRegions(regions: RegionView[], limit = 4): RegionView[] {
   return regions.filter(needsAttention).sort(rankRegions).slice(0, limit);
 }
 
@@ -651,11 +658,10 @@ export function metricStories(input: {
   grade: Grade;
   regions: RegionView[];
   recommendations: Recommendation[];
-  hevy: HevyPayload;
   physique: PhysiqueResult | null;
   overrides: LagMap;
 }): Record<Metric, MetricStory> {
-  const { grade, regions, recommendations, hevy, physique, overrides } = input;
+  const { grade, regions, recommendations, physique, overrides } = input;
   const withPhotos = physique?.status === "graded";
   const goalsSet = Object.keys(overrides).length > 0;
 
@@ -719,13 +725,13 @@ export function metricStories(input: {
     evidence:
       parts.progression === null
         ? "Based on your Hevy routines only"
-        : `Based on your Hevy routines + ${hevy.workoutCount} logged workouts`,
+        : `Based on your Hevy routines + your last ${PROGRESSION_WINDOW_DAYS / 7} weeks of logged workouts`,
     how: "Combines weekly volume against each muscle's range, how often each muscle is trained, whether it has a direct exercise, and estimated-strength trends per exercise from your logged sets.",
     limitations: [
       "Progression signals come from estimated strength in logged sets. They are not proof of muscle growth.",
       parts.progression === null
         ? "Capped at 7 until Hevy has logged workouts to read."
-        : `Only your most recent ${MAX_IMPORTED_WORKOUTS} workouts are imported.`,
+        : `Progression reads your last ${PROGRESSION_WINDOW_DAYS / 7} weeks of logged sets, so it reflects your current program rather than all-time gains.`,
     ],
     projected: parts.progression === null,
   };
@@ -773,7 +779,7 @@ export function buildReport(input: {
     ...rec,
     why: explainRecommendation(rec, regions),
   }));
-  const stories = metricStories({ grade, regions, recommendations, hevy, physique, overrides });
+  const stories = metricStories({ grade, regions, recommendations, physique, overrides });
   const details = reportDetails({ hevy, physique, regions });
   return { grade, baseline, plan, recommendations, regions, stories, details };
 }
@@ -825,10 +831,18 @@ export function reportDetails(input: {
 }): ReportDetails {
   const { hevy, physique, regions } = input;
   const dates = hevy.history.map((set) => set.date).filter(Boolean).sort();
-  const format = (iso: string) =>
-    new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  const first = hevy.firstWorkoutAt ?? dates[0];
+  const last = hevy.lastWorkoutAt ?? dates[dates.length - 1];
+  // Workout dates are calendar days; formatting in UTC keeps them from shifting a day.
+  const format = (day: string) =>
+    new Date(`${day.slice(0, 10)}T00:00:00Z`).toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      timeZone: "UTC",
+    });
   return {
-    dateRange: dates.length > 0 ? `${format(dates[0])} – ${format(dates[dates.length - 1])}` : null,
+    dateRange: first && last ? `${format(first)} – ${format(last)}` : null,
     timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     workouts: hevy.workoutCount,
     loggedSets: hevy.history.filter((set) => set.type !== "warmup").length,

@@ -11,7 +11,7 @@ import {
   scoreTone,
   type Metric,
 } from "@/report/view";
-import { OVERALL_FLOOR_MARGIN, OVERALL_WEIGHTS } from "@/scoring";
+import { OVERALL_FLOOR_MARGIN, OVERALL_WEIGHTS, PROGRESSION_WINDOW_DAYS } from "@/scoring";
 
 const SEVERITY_RANK = { blocker: 0, warn: 1, info: 2 } as const;
 
@@ -55,7 +55,7 @@ export function ScoreExplanation({ metric, data }: { metric: Metric; data: Repor
   const score = grade[metric].score;
   const findings =
     metric === "coverage"
-      ? focusRegions(regions, 4).map((row) => ({ id: row.id, title: `${row.name}: ${row.summary}`, detail: row.assessment }))
+      ? focusRegions(regions, 6).map((row) => ({ id: row.id, title: `${row.name}: ${row.summary}`, detail: row.assessment }))
       : grade.findings
           .filter((finding) => finding.metric === metric && finding.severity !== "info")
           .sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity])
@@ -128,7 +128,7 @@ export function ReportDetailsPanel({ data }: { data: ReportData }) {
         ? `${details.workouts} workouts, ${details.dateRange} (${details.timeZone})`
         : "No logged workouts imported",
     },
-    { label: "Logged working sets", value: String(details.loggedSets) },
+    { label: `Logged working sets (last ${PROGRESSION_WINDOW_DAYS / 7} weeks)`, value: String(details.loggedSets) },
     { label: "Routines graded", value: String(details.routines) },
     { label: "Photos", value: details.photos },
     {
@@ -196,6 +196,9 @@ export function ReportDetailsPanel({ data }: { data: ReportData }) {
           <li>Coverage and recovery read your saved routines, not week-to-week logs.</li>
           <li>Growth signals are estimates from logged sets, not proof of muscle growth.</li>
           <li>Recovery is an estimate from training structure, not a readiness measurement.</li>
+          {data.hevy.workoutsTruncated ? (
+            <li>Your account has more than 3,000 workouts. Only the first 3,000 Hevy returned are counted.</li>
+          ) : null}
           {details.unmatched.length > 0 ? (
             <li>
               {details.unmatched.length} exercise{details.unmatched.length === 1 ? " has" : "s have"} no Hevy exercise

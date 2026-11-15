@@ -2,6 +2,8 @@ export {
   gradeSplit,
   OVERALL_FLOOR_MARGIN,
   OVERALL_WEIGHTS,
+  PROGRESSION_WINDOW_DAYS,
+  recentHistory,
 } from "./score";
 export {
   EXERCISE_CATALOG,

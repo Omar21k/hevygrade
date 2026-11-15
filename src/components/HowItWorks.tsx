@@ -1,11 +1,12 @@
-import { MAX_IMPORTED_WORKOUTS } from "@/report/view";
+import { PROGRESSION_WINDOW_DAYS } from "@/scoring";
 
 export function KeyHandlingCopy() {
   return (
     <p className="text-[14px] leading-[22px] text-ink-2">
-      Your key is sent once to this app&apos;s server, which uses it to read your routines and your most recent{" "}
-      {MAX_IMPORTED_WORKOUTS} workouts from Hevy. The key is not saved in your browser or on the server. The imported
-      data is kept in this browser tab&apos;s session storage and is cleared when you close the tab.
+      Your key is sent once to this app&apos;s server, which uses it to read your routines and workout history from
+      Hevy. The key is not saved in your browser or on the server. Your routines, workout count, and the last{" "}
+      {PROGRESSION_WINDOW_DAYS / 7} weeks of logged sets are kept in this browser tab&apos;s session storage and are
+      cleared when you close the tab.
     </p>
   );
 }
