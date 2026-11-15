@@ -2,7 +2,7 @@ import { getExercise } from "./catalog";
 import { clamp, round1, weightedMean } from "./math";
 import {
   REGION_META,
-  priorityWeight,
+  regionScoreWeight,
   regionVerb,
   type RegionId,
 } from "./regions";
@@ -74,7 +74,7 @@ function scoreCoverage(
   const score = weightedMean(
     regions.map((row) => ({
       value: row.coverageScore,
-      weight: priorityWeight(row.priority),
+      weight: regionScoreWeight(row.region, row.priority),
     })),
   );
 
@@ -161,7 +161,7 @@ function scoreGrowth(
     regions.length === 0
       ? fallback
       : weightedMean(
-          regions.map((row) => ({ value: value(row), weight: priorityWeight(row.priority) })),
+          regions.map((row) => ({ value: value(row), weight: regionScoreWeight(row.region, row.priority) })),
         );
   const volumeRatio = (row: RegionBreakdown) =>
     clamp(row.effectiveSets / Math.max(row.targetLow, 1), 0, 1);

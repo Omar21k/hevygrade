@@ -32,27 +32,20 @@ describe("physique lag map", () => {
     expect(lagMap.lats).toBeUndefined();
   });
 
-  it("needs a stronger read before marking glutes as lagging", () => {
-    const baseline = [
-      { region: "lats" as const, development: 3.5, confidence: 0.85 },
-      { region: "chest_mid" as const, development: 3.5, confidence: 0.85 },
-      { region: "quads" as const, development: 3.5, confidence: 0.85 },
-    ];
-    const soft = lagMapFromPhysique({
+  it("does not mark glutes lagging from photos, even when they look small", () => {
+    const { lagMap, findings } = lagMapFromPhysique({
       viewsPresent: ["front", "side", "back"],
-      developments: [...baseline, { region: "glutes", development: 2.2, confidence: 0.7 }],
+      developments: [
+        { region: "lats", development: 2, confidence: 0.9 },
+        { region: "chest_mid", development: 3.5, confidence: 0.85 },
+        { region: "glutes", development: 1.4, confidence: 0.9 },
+      ],
       blindSpots: [],
       notes: [],
     });
-    expect(soft.lagMap.glutes).not.toBe("lagging");
-
-    const clear = lagMapFromPhysique({
-      viewsPresent: ["front", "side", "back"],
-      developments: [...baseline, { region: "glutes", development: 1.7, confidence: 0.85 }],
-      blindSpots: [],
-      notes: [],
-    });
-    expect(clear.lagMap.glutes).toBe("lagging");
+    expect(lagMap.lats).toBe("lagging");
+    expect(lagMap.glutes).not.toBe("lagging");
+    expect(findings.some((finding) => finding.region === "glutes")).toBe(false);
   });
 
   it("needs a confident read before calling a hard-to-see region lagging", () => {

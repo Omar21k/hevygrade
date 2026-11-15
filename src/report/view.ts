@@ -371,12 +371,30 @@ export function rankRegions(a: RegionView, b: RegionView): number {
   );
 }
 
-/** Photo-led lists skip low-priority aesthetic muscles when clearer gaps exist. */
-function feedbackFocusPool(regions: RegionView[]): RegionView[] {
-  const attention = regions.filter(needsAttention).sort(rankRegions);
-  const primary = attention.filter((row) => !LOW_AESTHETIC_PRIORITY_REGIONS.includes(row.id));
-  const deprioritized = attention.filter((row) => LOW_AESTHETIC_PRIORITY_REGIONS.includes(row.id));
-  return primary.length > 0 ? [...primary, ...deprioritized] : attention;
+function userCares(row: RegionView): boolean {
+  return row.goalSource === "you" || !LOW_AESTHETIC_PRIORITY_REGIONS.includes(row.id);
+}
+
+/** Photos (or a goal you set) say this muscle is behind. Training-only gaps are not "lacking". */
+export function lackingFromPhotos(row: RegionView): boolean {
+  if (!userCares(row)) return false;
+  return row.priority === "lagging" && (row.verdict === "both" || row.verdict === "photo-gap");
+}
+
+function photosWereGraded(regions: RegionView[]): boolean {
+  return regions.some((row) => row.photo.kind !== "no-photos");
+}
+
+/**
+ * What the report calls lacking. With photos, only muscles the photos (or your
+ * goal) flag — never glutes, calves, or forearms unless you set that goal.
+ * Without photos, training shortfalls on muscles people actually train.
+ */
+function lackingRegions(regions: RegionView[]): RegionView[] {
+  if (photosWereGraded(regions)) return regions.filter(lackingFromPhotos).sort(rankRegions);
+  return regions
+    .filter((row) => needsAttention(row) && userCares(row) && row.status === "below-target")
+    .sort(rankRegions);
 }
 
 /** Below-target first (in combined order), above-target last. */
@@ -393,16 +411,13 @@ export function compareRegions(a: RegionView, b: RegionView): number {
 }
 
 export function focusRegions(regions: RegionView[], limit = 4): RegionView[] {
-  return feedbackFocusPool(regions).slice(0, limit);
+  return lackingRegions(regions).slice(0, limit);
 }
 
 /** Puts recommendations for higher-ranked regions first; the planner's order breaks ties. */
 export function orderRecommendations(recommendations: Recommendation[], regions: RegionView[]): Recommendation[] {
-  const position = new Map([...regions].sort(rankRegions).map((row, index) => [row.id, index]));
-  const rankOf = (rec: Recommendation) => {
-    const row = rec.region ? regions.find((item) => item.id === rec.region) : undefined;
-    return row && needsAttention(row) ? (position.get(row.id) ?? regions.length) : regions.length;
-  };
+  const position = new Map(lackingRegions(regions).map((row, index) => [row.id, index]));
+  const rankOf = (rec: Recommendation) => position.get(rec.region as RegionId) ?? regions.length;
   return recommendations
     .map((rec, index) => ({ rec, index }))
     .sort((a, b) => rankOf(a.rec) - rankOf(b.rec) || a.index - b.index)
@@ -622,58 +637,39 @@ function capitalize(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-/** Two sentences at most; photo-flagged muscles first, training volume as supporting context. */
-function coverageTakeaway(focus: RegionView[], withPhotos: boolean): string {
-  const pool = withPhotos ? feedbackFocusPool(focus) : focus.sort(rankRegions);
-  const group = (verdict: Verdict) => {
-    const rows = pool.filter((row) => row.verdict === verdict);
-    const primary = rows.filter((row) => !LOW_AESTHETIC_PRIORITY_REGIONS.includes(row.id));
-    return (primary.length > 0 ? primary : rows).slice(0, 2);
-  };
-  const describe = (rows: RegionView[]) => {
-    const many = rows.length > 1 || regionVerb(rows[0].id) === "are";
-    return {
-      names: capitalize(joinNames(rows.map((row) => row.name.toLowerCase()))),
-      pick: (one: string, other: string) => (many ? other : one),
-    };
-  };
+/** Photo muscles only when photos exist. Training volume is the cause, not a second lacking list. */
+function coverageTakeaway(regions: RegionView[], withPhotos: boolean): string {
+  const lacking = lackingRegions(regions).slice(0, 2);
+  if (lacking.length === 0) {
+    return withPhotos
+      ? "Your photos don't show a clear lag in the muscles that matter. Routine shortfalls elsewhere aren't treated as what you're lacking."
+      : "Your split gives each priority muscle work within its target range.";
+  }
+  const many = lacking.length > 1 || regionVerb(lacking[0].id) === "are";
+  const pick = (one: string, other: string) => (many ? other : one);
+  const names = joinNames(lacking.map((row) => row.name.toLowerCase()));
+  const under = lacking.filter((row) => row.verdict === "both");
+  const onVolume = lacking.filter((row) => row.verdict === "photo-gap");
   const sentences: string[] = [];
-
-  const both = group("both");
-  if (both.length > 0) {
-    const { names, pick } = describe(both);
-    const fromPhotos = both.every((row) => row.goalSource === "photos");
-    const fromYou = both.every((row) => row.goalSource === "you");
+  if (under.length > 0) {
+    const underNames = joinNames(under.map((row) => row.name.toLowerCase()));
+    const fromYou = under.every((row) => row.goalSource === "you");
     sentences.push(
-      fromPhotos
-        ? `Your photos show ${names.toLowerCase()} behind the rest of your physique. Your Hevy split backs that up — ${pick("it's", "they're")} under the weekly target you'd want for a muscle that looks lagging.`
-        : fromYou
-          ? `${names} ${pick("is a priority", "are priorities")} you set and ${pick("is", "are")} under target in your training.`
-          : `${names} ${pick("is", "are")} flagged by your photos or goals and under target in your training.`,
+      fromYou
+        ? `${capitalize(underNames)} ${pick("is a priority", "are priorities")} you set, and ${pick("isn't", "aren't")} getting enough weekly work to match that.`
+        : `Your photos show ${underNames} behind the rest of your physique. Your routines look like a cause: ${pick("that muscle isn't", "those muscles aren't")} getting enough weekly work for something that looks behind.`,
     );
   }
-
-  const photoGap = group("photo-gap");
-  if (photoGap.length > 0) {
-    const { names, pick } = describe(photoGap);
+  if (onVolume.length > 0 && sentences.length < 2) {
+    const volumeNames = joinNames(onVolume.map((row) => row.name.toLowerCase()));
     sentences.push(
-      `${names} ${pick("looks", "look")} behind in your photos; routines already hit the raised target, so the fix is probably exercise choice or effort — not only more sets.`,
+      `${capitalize(volumeNames)} ${onVolume.length > 1 || regionVerb(onVolume[0].id) === "are" ? "look" : "looks"} behind in your photos, but the routines already hit the raised target. More sets on paper probably isn't the fix.`,
     );
   }
-
-  const gap = group("training-gap");
-  if (gap.length > 0 && sentences.length < 2) {
-    const { names, pick } = describe(gap);
-    sentences.push(
-      withPhotos
-        ? `${names} ${pick("isn't", "aren't")} the standout in your photos, but ${pick("gets", "get")} fewer weekly sets than ${pick("its", "their")} target — worth fixing after the photo-flagged gaps.`
-        : `${names} ${pick("gets", "get")} fewer weekly sets than ${pick("its", "their")} target.`,
-    );
+  if (sentences.length === 0) {
+    sentences.push(`Your photos show ${names} behind. That's what this report treats as lacking.`);
   }
-
-  return sentences.length > 0
-    ? sentences.slice(0, 2).join(" ")
-    : "Your split gives each of your priorities work within its target range.";
+  return sentences.slice(0, 2).join(" ");
 }
 
 function bestRecommendationFor(metric: Metric, recommendations: Recommendation[]): Recommendation | undefined {
@@ -694,10 +690,12 @@ export function metricStories(input: {
   const goalsSet = Object.keys(overrides).length > 0;
 
   // Coverage
-  const focus = feedbackFocusPool(regions);
-  const coverageRec = recommendations.find((rec) => rec.impact.coverage >= 0.1);
+  const focus = lackingRegions(regions);
+  const coverageRec =
+    recommendations.find((rec) => rec.region && focus.some((row) => row.id === rec.region)) ??
+    recommendations.find((rec) => rec.impact.coverage >= 0.1);
   const coverage: MetricStory = {
-    takeaway: coverageTakeaway(focus, withPhotos),
+    takeaway: coverageTakeaway(regions, withPhotos),
     opportunity: coverageRec
       ? coverageRec.headline
       : focus[0]
@@ -710,7 +708,7 @@ export function metricStories(input: {
     ]
       .filter(Boolean)
       .join(" + "),
-    how: "When you add photos, they pick which muscles matter most. Hevy volume is supporting context — it explains what might be causing a lag your photos show. Muscles that look behind get a higher target and count three times as much toward this score.",
+    how: "With photos, what you're lacking is what the photos show as behind — lats, chest, shoulders, arms, and quads ahead of everything else. Glutes, calves, and forearms are left out unless you set that goal. Your Hevy sets explain a likely cause, such as not hitting that muscle enough. Those photo priorities get a higher target and count much more toward this score.",
     limitations: [
       "Uses the sets saved in your routines, not what you logged in a given week.",
       withPhotos
@@ -803,7 +801,12 @@ export function buildReport(input: {
   const plan = buildPlan(scoring);
   const planned = buildRecommendations({ plan, grade, ...scoring });
   const regions = buildRegionViews({ grade, split, physique, overrides, recommendations: planned });
-  const recommendations = orderRecommendations(planned, regions).map((rec) => ({
+  const lead = new Set(lackingRegions(regions).map((row) => row.id));
+  const scoped =
+    photosWereGraded(regions) && lead.size > 0
+      ? planned.filter((rec) => !rec.region || lead.has(rec.region))
+      : planned.filter((rec) => !rec.region || !LOW_AESTHETIC_PRIORITY_REGIONS.includes(rec.region));
+  const recommendations = orderRecommendations(scoped, regions).map((rec) => ({
     ...rec,
     why: explainRecommendation(rec, regions),
   }));
@@ -824,10 +827,14 @@ export function overviewHeadline(overall: number): string {
 
 export function overviewSubline(regions: RegionView[]): string {
   const focus = focusRegions(regions, 2);
-  if (focus.length === 0) return "Your split is within target across the board. Keep logging to track progression.";
+  if (focus.length === 0) {
+    return photosWereGraded(regions)
+      ? "Your photos don't show a clear lag in the muscles that matter."
+      : "Your split is within target across the board. Keep logging to track progression.";
+  }
   const names = joinNames(focus.map((row) => row.name.toLowerCase()));
   if (focus.every((row) => row.goalSource === "photos")) {
-    return `Your photos highlight ${names} — training volume may be part of why. Start there before smaller muscles.`;
+    return `Your photos say what's lacking: ${names}. Your routines are the context for why.`;
   }
   if (focus.every((row) => row.verdict === "both")) {
     const source = focus.every((row) => row.goalSource === "you")

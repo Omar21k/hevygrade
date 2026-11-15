@@ -51,27 +51,13 @@ describe("combined photo + training read", () => {
     for (const row of trainingOnly) expect(row.assessment).toMatch(/photos|Hevy|routines/i);
   });
 
-  it("ranks agreed gaps ahead of training-only gaps everywhere", () => {
-    const focus = focusRegions(regions, 10);
-    const firstTrainingOnly = focus.findIndex((row) => row.verdict === "training-gap");
-    const lastBoth = focus.map((row) => row.verdict).lastIndexOf("both");
-    expect(lastBoth).toBeLessThan(firstTrainingOnly);
-  });
-
-  it("leads coverage with photo-flagged muscles, not low-priority glutes", () => {
-    const takeaway = stories.coverage.takeaway;
-    expect(takeaway).toMatch(/photos show.*lats/i);
-    expect(takeaway).not.toMatch(/glutes/i);
-    const topTrainingOnly = focusRegions(regions, 10).find((row) => row.verdict === "training-gap")!;
-    expect(takeaway.toLowerCase()).toContain(topTrainingOnly.name.toLowerCase());
-  });
-
-  it("ranks lats ahead of glutes when both look behind", () => {
-    const focus = focusRegions(regions, 6);
-    const latsIndex = focus.findIndex((row) => row.id === "lats");
-    const glutesIndex = focus.findIndex((row) => row.id === "glutes");
-    expect(latsIndex).toBeGreaterThanOrEqual(0);
-    if (glutesIndex >= 0) expect(latsIndex).toBeLessThan(glutesIndex);
+  it("says what's lacking is the photo muscle, and does not mention glutes or training-only gaps", () => {
+    const takeaway = stories.coverage.takeaway.toLowerCase();
+    expect(takeaway).toMatch(/photos show.*lats/);
+    expect(takeaway).not.toContain("glutes");
+    expect(takeaway).not.toContain("abs");
+    expect(focusRegions(regions, 10).map((row) => row.id)).toEqual(["lats"]);
+    expect(recommendations.every((rec) => !rec.region || rec.region === "lats")).toBe(true);
   });
 
   it("leads the plan with a muscle both signals agree on", () => {

@@ -7,7 +7,7 @@ import {
   impactLabel,
   METRIC_LABEL,
   METRICS,
-  needsAttention,
+  lackingFromPhotos,
   overviewHeadline,
   overviewSubline,
   scoreStatus,
@@ -21,12 +21,15 @@ import { recAnchor } from "./recAnchor";
 
 function cardDetail(metric: Metric, data: ReturnType<typeof useReadyReport>): string {
   if (metric === "coverage") {
-    const attention = data.regions.filter(needsAttention).length;
-    const both = data.regions.filter((row) => row.verdict === "both").length;
-    if (attention === 0) return "Every muscle on target";
-    return both > 0
-      ? `${both} flagged and under target`
-      : `${attention} area${attention === 1 ? "" : "s"} to look at`;
+    const lacking = data.regions.filter(lackingFromPhotos);
+    const photos = data.regions.some((row) => row.photo.kind !== "no-photos");
+    if (photos) {
+      if (lacking.length === 0) return "Photos don't show a clear lag";
+      return lacking.length === 1 ? `${lacking[0].name} behind in photos` : `${lacking.length} muscles behind in photos`;
+    }
+    const below = data.regions.filter((row) => row.status === "below-target").length;
+    if (below === 0) return "Every muscle on target";
+    return `${below} area${below === 1 ? "" : "s"} below target`;
   }
   if (metric === "growth") {
     return data.stories.growth.projected ? "Projected from routines" : `From ${data.hevy.workoutCount} logged workouts`;
@@ -42,7 +45,7 @@ export function OverviewView() {
   const [overallOpen, setOverallOpen] = useState(false);
   const top = recommendations[0];
   const focus = focusRegions(regions);
-  const attentionCount = regions.filter(needsAttention).length;
+  const attentionCount = focus.length;
   const overallTone = scoreTone(grade.overall);
 
   return (
@@ -58,26 +61,23 @@ export function OverviewView() {
             type="button"
             onClick={() => setOverallOpen(true)}
             aria-haspopup="dialog"
-            className="group flex shrink-0 flex-col items-start gap-1 text-left transition-colors hover:text-ink md:items-end md:text-right"
+            className="group flex shrink-0 items-baseline gap-2 self-start text-left md:mt-1"
           >
-            <span className="flex items-center gap-2 text-[13px] font-medium tracking-wide text-ink-3">
-              Overall
-              <span aria-hidden className="transition-colors group-hover:text-accent">
-                ↗
-              </span>
+            <span className="text-[13px] font-medium tracking-wide text-ink-3">Overall</span>
+            <span
+              className={`text-[22px] font-medium leading-none tabular-nums ${
+                overallTone === "good" ? "text-good" : "text-ink-2"
+              }`}
+            >
+              {grade.overall.toFixed(1)}
             </span>
-            <span className="flex items-baseline gap-1">
-              <span
-                className={`text-[28px] font-medium leading-none tabular-nums md:text-[32px] ${
-                  overallTone === "good" ? "text-good" : "text-warn"
-                }`}
-              >
-                {grade.overall.toFixed(1)}
-              </span>
-              <span className="text-[14px] text-ink-3">/ 10</span>
+            <span className="text-[13px] text-ink-3">/ 10</span>
+            <span aria-hidden className="text-[13px] text-ink-3 transition-colors group-hover:text-accent">
+              ↗
             </span>
-            <StatusLabel tone={overallTone}>{scoreStatus(grade.overall)}</StatusLabel>
-            <span className="sr-only">. How the overall score is calculated.</span>
+            <span className="sr-only">
+              {scoreStatus(grade.overall)}. How the overall score is calculated.
+            </span>
           </button>
         </div>
 
@@ -211,7 +211,7 @@ export function OverviewView() {
         )}
         <p className="mt-2 text-[14px] leading-[22px] text-ink-3">
           {attentionCount > focus.length ? `${attentionCount - focus.length} more to look at. ` : ""}
-          Each muscle is judged on your photos (or the goal you set) and your training together.
+          With photos, this list is only what the photos show as behind. Your sets explain a likely cause. Glutes, calves, and forearms stay off it unless you set that goal.
         </p>
       </section>
 

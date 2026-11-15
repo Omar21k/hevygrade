@@ -85,12 +85,12 @@ describe("gradeSplit", () => {
     const trapsLag = gradeSplit({ split: fixtures.laggingUpperChest, lagMap: { traps: "lagging" } });
     const twoLag = gradeSplit({
       split: fixtures.laggingUpperChest,
-      lagMap: { traps: "lagging", lats: "lagging" },
+      lagMap: { lats: "lagging", chest_upper: "lagging" },
     });
 
     expect(trapsLag.growth.score).toBeLessThan(neutral.growth.score);
     expect(neutral.growth.score - trapsLag.growth.score).toBeLessThan(1.5);
-    expect(twoLag.growth.score).toBeLessThanOrEqual(trapsLag.growth.score);
+    expect(twoLag.growth.score).toBeLessThan(neutral.growth.score);
   });
 
   it("gives indirect work partial selection credit", () => {

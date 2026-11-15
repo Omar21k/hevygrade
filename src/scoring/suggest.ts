@@ -1,5 +1,5 @@
 import { catalogEntries, getExercise } from "./catalog";
-import { REGION_META, regionVerb, type RegionId } from "./regions";
+import { LOW_AESTHETIC_PRIORITY_REGIONS, REGION_META, regionVerb, type RegionId } from "./regions";
 import { gradeSplit } from "./score";
 import type {
   ExerciseDef,
@@ -185,6 +185,7 @@ function targetRegions(grade: Grade): RegionBreakdown[] {
   return grade.regions
     .filter((row) => {
       if (row.priority === "overdeveloped") return false;
+      if (LOW_AESTHETIC_PRIORITY_REGIONS.includes(row.region) && row.priority !== "lagging") return false;
       if (row.priority === "lagging") return row.effectiveSets < row.targetHigh || !row.hasPrimary;
       return row.coverageScore < 6.5;
     })

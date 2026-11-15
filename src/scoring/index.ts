@@ -17,6 +17,7 @@ export {
   MAJOR_PHYSIQUE_REGIONS,
   LOW_AESTHETIC_PRIORITY_REGIONS,
   aestheticFeedbackWeight,
+  regionScoreWeight,
   priorityWeight,
   regionVerb,
   targetsFor,

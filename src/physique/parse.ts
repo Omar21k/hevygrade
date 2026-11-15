@@ -21,7 +21,9 @@ Rules:
 - Brachialis / front-arm thickness: if the arm looks small or flat from the FRONT even with decent biceps peak, score brachialis low.
 - Upper chest: if the clavicular shelf is flat vs mid-chest, score chest_upper lower than chest_mid.
 - confidence < 0.45 for anything guessed.
-- Typical male lifter goals: prioritize visible upper-body shape (lats, chest, shoulders, arms) over glutes/calves. Do not mark glutes lagging on a normal physique unless clearly underdeveloped; indirect leg work often covers them.`;
+- Typical male lifter goals: the muscles that matter are lats, chest, shoulders, arms, and quads. Judge those first.
+- Do not mark glutes, calves, or forearms as lagging. Most lifters never train them directly, and indirect work is expected.
+- On a back photo, lats are a primary call. A narrow back relative to shoulders and arms is lagging lats, not a glute note.`;
 
 export function parsePhysiqueJson(raw: string, viewsPresent: PhysiqueView[]): PhysiqueAssessment {
   const start = raw.indexOf("{");

@@ -45,14 +45,14 @@ export function lagMapFromPhysique(assessment: PhysiqueAssessment): {
     let priority: LagMap[RegionId] | undefined;
     const lagEvidence =
       !HARD_TO_SEE.has(row.region) || row.confidence >= HARD_TO_SEE_LAG_CONFIDENCE;
+    // Glutes, calves, and forearms are usually trained indirectly and most lifters
+    // don't want them called out. A goal the user sets can still mark them lagging.
     const lowAesthetic = LOW_AESTHETIC_PRIORITY_REGIONS.includes(row.region);
-    const lagThreshold = lowAesthetic
-      ? { abs: 1.8, relative: -1.0, confidence: 0.75 }
-      : { abs: 2.2, relative: -0.7, confidence: 0.45 };
     if (
-      (row.development <= lagThreshold.abs || relative <= lagThreshold.relative) &&
+      !lowAesthetic &&
+      (row.development <= 2.2 || relative <= -0.7) &&
       lagEvidence &&
-      row.confidence >= lagThreshold.confidence
+      row.confidence >= 0.45
     ) {
       priority = "lagging";
     }

@@ -154,9 +154,14 @@ export const MAJOR_PHYSIQUE_REGIONS: RegionId[] = [
 export const LOW_AESTHETIC_PRIORITY_REGIONS: RegionId[] = ["glutes", "calves", "forearms"];
 
 export function aestheticFeedbackWeight(region: RegionId): number {
-  if (LOW_AESTHETIC_PRIORITY_REGIONS.includes(region)) return 0.3;
+  if (LOW_AESTHETIC_PRIORITY_REGIONS.includes(region)) return 0.25;
   if (MAJOR_PHYSIQUE_REGIONS.includes(region)) return 1;
   return 0.65;
+}
+
+/** Coverage and growth weight. Low-priority muscles barely move the score. */
+export function regionScoreWeight(region: RegionId, priority: RegionPriority | undefined): number {
+  return priorityWeight(priority) * aestheticFeedbackWeight(region);
 }
 
 export function targetsFor(
