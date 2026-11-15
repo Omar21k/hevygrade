@@ -152,36 +152,33 @@ function scoreGrowth(
   const findings: Finding[] = [];
   const notes: string[] = [];
   const lagging = regions.filter((row) => row.priority === "lagging");
-  const focus = lagging.length > 0 ? lagging : regions.filter((row) => row.priority !== "overdeveloped");
 
-  const volumePts =
-    focus.length === 0
-      ? 3
-      : (focus.reduce((sum, row) => {
-          const ratio = clamp(row.effectiveSets / Math.max(row.targetLow, 1), 0, 1.15);
-          return sum + Math.min(ratio, 1);
-        }, 0) /
-          focus.length) *
-        4;
+  // Every region counts, weighted like coverage, so one lagging muscle shifts
+  // growth instead of becoming the whole score.
+  const growthMean = (value: (row: RegionBreakdown) => number, fallback: number) =>
+    regions.length === 0
+      ? fallback
+      : weightedMean(
+          regions.map((row) => ({ value: value(row), weight: priorityWeight(row.priority) })),
+        );
+  const volumeRatio = (row: RegionBreakdown) =>
+    clamp(row.effectiveSets / Math.max(row.targetLow, 1), 0, 1);
 
-  const freqPts =
-    focus.length === 0
-      ? 1.5
-      : focus.reduce((sum, row) => {
-          if (row.frequency >= 2) return sum + 2;
-          if (row.frequency === 1) return sum + 1;
-          return sum;
-        }, 0) / focus.length;
+  const volumePts = growthMean(volumeRatio, 0.75) * 4;
 
+  const freqPts = growthMean((row) => (row.frequency >= 2 ? 2 : row.frequency === 1 ? 1 : 0), 1.5);
+
+  // Indirect work earns up to half credit; a dedicated primary movement earns full.
   const selectionPts =
-    focus.length === 0
-      ? 1.5
-      : (focus.filter((row) => row.hasPrimary).length / focus.length) * 2;
+    growthMean((row) => (row.hasPrimary ? 1 : Math.min(volumeRatio(row), 0.5)), 0.75) * 2;
 
   const usedHistory = Boolean(input.history && input.history.length > 0);
   let progressionPts = 0;
   if (usedHistory) {
     progressionPts = estimateProgression(input);
+    if (progressionPts === UNKNOWN_PROGRESSION) {
+      notes.push("Not enough repeat sessions per exercise in Hevy yet to read a progression trend.");
+    }
   } else {
     notes.push("No Hevy history yet — growth is projected from the routine only and capped at 7.");
     findings.push({
@@ -235,21 +232,54 @@ function scoreGrowth(
   };
 }
 
-/** Placeholder until Hevy history is wired: detects any overload trend in logged sets. */
+const UNKNOWN_PROGRESSION = 0.5;
+const MIN_SESSIONS_FOR_TREND = 3;
+/** Within ±2% of the starting estimate counts as holding, not progressing. */
+const TREND_BAND = 0.02;
+
+/** Epley estimated 1RM for loaded sets; reps for bodyweight sets. */
+function setStrength(weightKg: number | undefined, reps: number): number {
+  return weightKg && weightKg > 0 ? weightKg * (1 + reps / 30) : reps;
+}
+
+/**
+ * Trend per exercise: best set of each session, earliest third of sessions vs
+ * latest third. Compared per exercise so rotating movements isn't read as
+ * regression. Exercises in the current split are preferred when they have data.
+ */
 function estimateProgression(input: ScoreInput): number {
-  const history = input.history ?? [];
-  const working = history.filter((set) => set.type !== "warmup" && set.weightKg && set.reps);
-  if (working.length < 6) return 0.5;
-  const sorted = [...working].sort((a, b) => a.date.localeCompare(b.date));
-  const first = sorted.slice(0, Math.ceil(sorted.length / 3));
-  const last = sorted.slice(-Math.ceil(sorted.length / 3));
-  const avg = (sets: typeof working) =>
-    sets.reduce((sum, set) => sum + (set.weightKg ?? 0) * (set.reps ?? 0), 0) /
-    sets.length;
-  const delta = avg(last) - avg(first);
-  if (delta > 0) return 2;
-  if (delta > -5) return 1;
-  return 0.4;
+  const sessionsByExercise = new Map<string, Map<string, number>>();
+  for (const set of input.history ?? []) {
+    if (set.type === "warmup" || !set.reps || set.reps <= 0) continue;
+    const strength = setStrength(set.weightKg, set.reps);
+    const sessions = sessionsByExercise.get(set.exerciseId) ?? new Map<string, number>();
+    const day = set.date.slice(0, 10);
+    sessions.set(day, Math.max(sessions.get(day) ?? 0, strength));
+    sessionsByExercise.set(set.exerciseId, sessions);
+  }
+
+  const trends = new Map<string, number>();
+  for (const [exerciseId, sessions] of sessionsByExercise) {
+    if (sessions.size < MIN_SESSIONS_FOR_TREND) continue;
+    const ordered = [...sessions.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([, strength]) => strength);
+    const third = Math.ceil(ordered.length / 3);
+    const avg = (values: number[]) => values.reduce((sum, value) => sum + value, 0) / values.length;
+    const early = avg(ordered.slice(0, third));
+    const late = avg(ordered.slice(-third));
+    if (early <= 0) continue;
+    const change = (late - early) / early;
+    trends.set(exerciseId, change > TREND_BAND ? 1 : change >= -TREND_BAND ? 0.5 : 0);
+  }
+  if (trends.size === 0) return UNKNOWN_PROGRESSION;
+
+  const inSplit = new Set(
+    input.split.days.flatMap((day) => day.exercises.map((item) => item.exerciseId)),
+  );
+  const current = [...trends].filter(([id]) => inSplit.has(id)).map(([, value]) => value);
+  const pool = current.length > 0 ? current : [...trends.values()];
+  return (pool.reduce((sum, value) => sum + value, 0) / pool.length) * 2;
 }
 
 function scoreRecovery(

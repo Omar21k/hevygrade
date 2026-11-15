@@ -80,6 +80,51 @@ describe("gradeSplit", () => {
     expect(observed.growth.score).toBeGreaterThan(projected.growth.score);
   });
 
+  it("lets one lagging region shift growth without becoming the whole score", () => {
+    const neutral = gradeSplit({ split: fixtures.laggingUpperChest, lagMap: {} });
+    const trapsLag = gradeSplit({ split: fixtures.laggingUpperChest, lagMap: { traps: "lagging" } });
+    const twoLag = gradeSplit({
+      split: fixtures.laggingUpperChest,
+      lagMap: { traps: "lagging", lats: "lagging" },
+    });
+
+    expect(trapsLag.growth.score).toBeLessThan(neutral.growth.score);
+    expect(neutral.growth.score - trapsLag.growth.score).toBeLessThan(1.5);
+    expect(twoLag.growth.score).toBeLessThanOrEqual(trapsLag.growth.score);
+  });
+
+  it("gives indirect work partial selection credit", () => {
+    const grade = gradeSplit({ split: fixtures.laggingUpperChest, lagMap: { chest_upper: "lagging" } });
+    const upper = grade.regions.find((row) => row.region === "chest_upper")!;
+    expect(upper.hasPrimary).toBe(false);
+    expect(upper.effectiveSets).toBeGreaterThan(0);
+    expect(grade.growth.score).toBeGreaterThan(3);
+  });
+
+  it("reads progression per exercise, so rotating in a lighter lift isn't regression", () => {
+    const sessions = (exerciseId: string, start: number, step: number, days: number[]) =>
+      days.map((day, index) => ({
+        date: `2026-09-${String(day).padStart(2, "0")}`,
+        exerciseId,
+        weightKg: start + index * step,
+        reps: 8,
+        type: "normal" as const,
+      }));
+    const history = [
+      ...sessions("barbell_bench_press", 80, 2.5, [1, 4, 8, 11]),
+      ...sessions("incline_dumbbell_press", 24, 2, [15, 18, 22, 25]),
+    ];
+    const split = fixtures.upperChestWithVolume;
+
+    const grade = gradeSplit({ split, lagMap: {}, history });
+    const regressing = gradeSplit({
+      split,
+      lagMap: {},
+      history: history.map((set) => ({ ...set, weightKg: 200 - (set.weightKg ?? 0) })),
+    });
+    expect(grade.growth.score).toBeGreaterThan(regressing.growth.score);
+  });
+
   it("drops recovery when the same heavy region is trained on consecutive days", () => {
     const split = {
       title: "Stacked chest",

@@ -136,6 +136,25 @@ const catalogList: ExerciseDef[] = [
     ],
   },
   {
+    id: "dumbbell_shrug",
+    name: "Dumbbell Shrug",
+    aliases: ["shrug", "db shrug"],
+    fatigue: "low",
+    stimulus: [
+      { region: "traps", weight: 1, role: "primary" },
+      { region: "forearms", weight: 0.25, role: "secondary" },
+    ],
+  },
+  {
+    id: "barbell_shrug",
+    name: "Barbell Shrug",
+    fatigue: "moderate",
+    stimulus: [
+      { region: "traps", weight: 1, role: "primary" },
+      { region: "forearms", weight: 0.3, role: "secondary" },
+    ],
+  },
+  {
     id: "incline_dumbbell_curl",
     name: "Incline Dumbbell Curl",
     aliases: ["incline bicep curl"],

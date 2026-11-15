@@ -25,6 +25,12 @@ describe("buildPlan", () => {
     expect(plan.steps.some((step) => step.title.toLowerCase().includes("incline"))).toBe(true);
   });
 
+  it("suggests direct trap work when traps are lagging", () => {
+    const plan = buildPlan({ split: fixtures.laggingUpperChest, lagMap: { traps: "lagging" } });
+    expect(plan.steps.some((step) => step.region === "traps")).toBe(true);
+    expect(plan.steps.some((step) => step.title.toLowerCase().includes("shrug"))).toBe(true);
+  });
+
   it("only takes steps that improve balance and never tanks a metric", () => {
     const plan = buildPlan({
       split: fixtures.laggingUpperChest,

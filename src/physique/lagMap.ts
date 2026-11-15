@@ -2,6 +2,13 @@ import type { Finding, LagMap } from "@/scoring/types";
 import { REGION_META, regionVerb, type RegionId } from "@/scoring/regions";
 import type { PhysiqueAssessment, RegionDevelopment } from "./types";
 
+/**
+ * Front/side/back photos show these poorly (traps hide behind posture, abs
+ * behind body fat), so a low read is easily a lighting or angle artifact.
+ */
+const HARD_TO_SEE = new Set<RegionId>(["traps", "erectors", "forearms", "abs"]);
+const HARD_TO_SEE_LAG_CONFIDENCE = 0.7;
+
 function mean(values: number[]): number {
   if (values.length === 0) return 3;
   return values.reduce((sum, value) => sum + value, 0) / values.length;
@@ -31,7 +38,9 @@ export function lagMapFromPhysique(assessment: PhysiqueAssessment): {
   for (const row of usable) {
     const relative = row.development - baseline;
     let priority: LagMap[RegionId] | undefined;
-    if (row.development <= 2.2 || relative <= -0.7) priority = "lagging";
+    const lagEvidence =
+      !HARD_TO_SEE.has(row.region) || row.confidence >= HARD_TO_SEE_LAG_CONFIDENCE;
+    if ((row.development <= 2.2 || relative <= -0.7) && lagEvidence) priority = "lagging";
     else if (row.development >= 4.3 && relative >= 0.8) priority = "overdeveloped";
     else priority = "maintain";
 

@@ -32,6 +32,29 @@ describe("physique lag map", () => {
     expect(lagMap.lats).toBeUndefined();
   });
 
+  it("needs a confident read before calling a hard-to-see region lagging", () => {
+    const base = [
+      { region: "chest_mid" as const, development: 4, confidence: 0.8 },
+      { region: "quads" as const, development: 4, confidence: 0.8 },
+    ];
+    const shaky = lagMapFromPhysique({
+      viewsPresent: ["front", "side"],
+      developments: [...base, { region: "traps", development: 2, confidence: 0.55 }],
+      blindSpots: [],
+      notes: [],
+    });
+    expect(shaky.lagMap.traps).toBe("maintain");
+    expect(shaky.findings.some((finding) => finding.region === "traps")).toBe(false);
+
+    const clear = lagMapFromPhysique({
+      viewsPresent: ["front", "back"],
+      developments: [...base, { region: "traps", development: 2, confidence: 0.8 }],
+      blindSpots: [],
+      notes: [],
+    });
+    expect(clear.lagMap.traps).toBe("lagging");
+  });
+
   it("parses vision JSON and ignores unknown region ids", () => {
     const assessment = parsePhysiqueJson(
       JSON.stringify({
