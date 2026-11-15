@@ -413,14 +413,21 @@ function consecutiveOverlap(
   return penalty;
 }
 
+export const OVERALL_WEIGHTS = { coverage: 0.4, growth: 0.35, recovery: 0.25 } as const;
+/** The overall can't sit more than this far above the weakest metric. */
+export const OVERALL_FLOOR_MARGIN = 3;
+
 export function gradeSplit(input: ScoreInput): Grade {
   const regions = buildBreakdown(input);
   const coverage = scoreCoverage(input, regions);
   const growth = scoreGrowth(input, regions);
   const recovery = scoreRecovery(input, regions);
 
-  const raw = 0.4 * coverage.score + 0.35 * growth.score + 0.25 * recovery.score;
-  const floorCap = Math.min(coverage.score, growth.score, recovery.score) + 3;
+  const raw =
+    OVERALL_WEIGHTS.coverage * coverage.score +
+    OVERALL_WEIGHTS.growth * growth.score +
+    OVERALL_WEIGHTS.recovery * recovery.score;
+  const floorCap = Math.min(coverage.score, growth.score, recovery.score) + OVERALL_FLOOR_MARGIN;
   const overall = round1(clamp(Math.min(raw, floorCap), 0, 10));
 
   return {

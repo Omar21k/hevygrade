@@ -141,6 +141,10 @@ function RegionDetails({
   const recId = row.recommendationIds[0];
   return (
     <div className="grid grid-cols-1 gap-6 px-5 pb-6 pt-2 md:grid-cols-2 md:px-6">
+      <div className="rounded-control bg-raised px-4 py-3 md:col-span-2">
+        <p className="hg-eyebrow">Photos + training</p>
+        <p className="mt-1 text-ink">{row.assessment}</p>
+      </div>
       <div className="flex flex-col gap-4">
         <GoalEditor
           row={row}

@@ -7,26 +7,26 @@ import {
   impactLabel,
   METRIC_LABEL,
   METRICS,
+  needsAttention,
   overviewHeadline,
   overviewSubline,
   scoreStatus,
   scoreTone,
-  STATUS_LABEL,
   type Metric,
 } from "@/report/view";
 import Link from "next/link";
 import { useState } from "react";
-import { ReportDetailsPanel, ScoreExplanation } from "./ReportDialogs";
+import { OverallExplanation, ReportDetailsPanel, ScoreExplanation } from "./ReportDialogs";
 import { recAnchor } from "./recAnchor";
 
 function cardDetail(metric: Metric, data: ReturnType<typeof useReadyReport>): string {
   if (metric === "coverage") {
-    const below = data.regions.filter((row) => row.status === "below-target");
-    const priorities = below.filter((row) => row.priority === "lagging").length;
-    if (below.length === 0) return "Every muscle within target";
-    return priorities > 0
-      ? `${priorities} priorit${priorities === 1 ? "y" : "ies"} below target`
-      : `${below.length} area${below.length === 1 ? "" : "s"} below target`;
+    const attention = data.regions.filter(needsAttention).length;
+    const both = data.regions.filter((row) => row.verdict === "both").length;
+    if (attention === 0) return "Every muscle on target";
+    return both > 0
+      ? `${both} flagged and under target`
+      : `${attention} area${attention === 1 ? "" : "s"} to look at`;
   }
   if (metric === "growth") {
     return data.stories.growth.projected ? "Projected from routines" : `From ${data.hevy.workoutCount} logged workouts`;
@@ -39,16 +39,49 @@ export function OverviewView() {
   const { grade, regions, recommendations } = data;
   const [openMetric, setOpenMetric] = useState<Metric | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [overallOpen, setOverallOpen] = useState(false);
   const top = recommendations[0];
   const focus = focusRegions(regions);
-  const belowCount = regions.filter((row) => row.status === "below-target").length;
+  const attentionCount = regions.filter(needsAttention).length;
+  const overallTone = scoreTone(grade.overall);
 
   return (
     <div className="flex flex-col gap-10 md:gap-12">
       <section>
-        <p className="hg-eyebrow">Your training, in focus</p>
-        <h1 className="hg-h1 mt-2">{overviewHeadline(grade.overall)}</h1>
-        <p className="mt-3 max-w-[640px] text-ink-2">{overviewSubline(regions, recommendations)}</p>
+        <div className="flex flex-col gap-6 md:flex-row md:items-start md:justify-between md:gap-10">
+          <div className="min-w-0">
+            <p className="hg-eyebrow">Your training, in focus</p>
+            <h1 className="hg-h1 mt-2">{overviewHeadline(grade.overall)}</h1>
+            <p className="mt-3 max-w-[640px] text-ink-2">{overviewSubline(regions)}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setOverallOpen(true)}
+            aria-haspopup="dialog"
+            className="group flex shrink-0 items-center justify-between gap-6 rounded-card border border-line bg-surface px-5 py-4 text-left transition-colors hover:border-ink-3/60 hover:bg-raised md:min-w-[220px] md:flex-col md:items-start md:gap-1 md:px-6 md:py-5"
+          >
+            <span className="flex flex-col gap-1">
+              <span className="flex items-center gap-2 text-[15px] font-medium text-ink">
+                Overall score
+                <span aria-hidden className="text-ink-3 transition-colors group-hover:text-accent">
+                  ↗
+                </span>
+              </span>
+              <StatusLabel tone={overallTone}>{scoreStatus(grade.overall)}</StatusLabel>
+            </span>
+            <span className="flex items-baseline gap-1.5 md:order-first md:mb-1">
+              <span
+                className={`text-[52px] font-semibold leading-none tabular-nums md:text-[64px] ${
+                  overallTone === "good" ? "text-good" : "text-warn"
+                }`}
+              >
+                {grade.overall.toFixed(1)}
+              </span>
+              <span className="text-ink-3">/ 10</span>
+            </span>
+            <span className="sr-only">. How the overall score is calculated.</span>
+          </button>
+        </div>
 
         <ul className="mt-8 grid grid-cols-1 gap-3 min-[560px]:grid-cols-3">
           {METRICS.map((metric) => {
@@ -83,10 +116,7 @@ export function OverviewView() {
             );
           })}
         </ul>
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-x-6">
-          <p className="text-[14px] leading-[22px] text-ink-3">
-            Training summary <span className="font-medium tabular-nums text-ink-2">{grade.overall.toFixed(1)} / 10</span>
-          </p>
+        <div className="mt-3 flex flex-wrap items-center justify-end gap-x-6">
           <button
             type="button"
             onClick={() => setDetailsOpen(true)}
@@ -111,7 +141,7 @@ export function OverviewView() {
                   {top.headline}
                 </h3>
                 <span className="rounded-full bg-accent/15 px-2.5 py-0.5 text-[12px] font-medium leading-[18px] text-accent">
-                  Highest impact
+                  Start here
                 </span>
               </div>
               <p className="mt-3 text-ink">{top.action}.</p>
@@ -160,20 +190,16 @@ export function OverviewView() {
               <li key={row.id}>
                 <Link
                   href={`/report/regions?open=${row.id}`}
-                  className="grid min-h-14 grid-cols-[1fr_auto] items-center gap-x-4 gap-y-0.5 px-5 py-3 hover:bg-raised md:grid-cols-[1.2fr_1fr_1fr_auto_auto] md:px-6"
+                  className="flex min-h-14 items-center gap-4 px-5 py-3 hover:bg-raised md:px-6"
                 >
-                  <span className="font-medium text-ink">{row.name}</span>
-                  <span className="text-[14px] tabular-nums text-ink-2 max-md:col-start-1 max-md:row-start-2">
-                    {row.effectiveSets} sets / week
-                    <span className="md:hidden"> · target {row.targetMin}–{row.targetMax}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex flex-wrap items-baseline justify-between gap-x-4">
+                      <span className="font-medium text-ink">{row.name}</span>
+                      <StatusLabel tone="warn">{row.summary}</StatusLabel>
+                    </span>
+                    <span className="mt-0.5 block text-[14px] leading-[22px] text-ink-2">{row.assessment}</span>
                   </span>
-                  <span className="hidden text-[14px] tabular-nums text-ink-3 md:block">
-                    Target {row.targetMin}–{row.targetMax}
-                  </span>
-                  <span className="max-md:col-start-2 max-md:row-start-1">
-                    <StatusLabel tone="warn">{STATUS_LABEL[row.status]}</StatusLabel>
-                  </span>
-                  <span aria-hidden className="text-ink-3 max-md:col-start-2 max-md:row-start-2 max-md:justify-self-end">
+                  <span aria-hidden className="text-ink-3">
                     ›
                   </span>
                 </Link>
@@ -186,9 +212,8 @@ export function OverviewView() {
           </p>
         )}
         <p className="mt-2 text-[14px] leading-[22px] text-ink-3">
-          {belowCount > focus.length ? `${belowCount - focus.length} more below target. ` : ""}
-          Visual priorities and training volume are different signals. A muscle can be a priority while its volume is on
-          target.
+          {attentionCount > focus.length ? `${attentionCount - focus.length} more to look at. ` : ""}
+          Each muscle is judged on your photos (or the goal you set) and your training together.
         </p>
       </section>
 
@@ -220,6 +245,9 @@ export function OverviewView() {
         title={openMetric ? METRIC_LABEL[openMetric] : ""}
       >
         {openMetric ? <ScoreExplanation metric={openMetric} data={data} /> : null}
+      </Dialog>
+      <Dialog open={overallOpen} onClose={() => setOverallOpen(false)} title="Overall score">
+        <OverallExplanation data={data} />
       </Dialog>
       <Dialog open={detailsOpen} onClose={() => setDetailsOpen(false)} title="How scores work">
         <ReportDetailsPanel data={data} />

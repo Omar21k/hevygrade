@@ -1,8 +1,11 @@
 import type { HevyPayload } from "@/hevy/session";
 import {
   applyChanges,
+  buildPlan,
   gradeSplit,
+  priorityWeight,
   REGION_META,
+  regionVerb,
   snapshot,
   tryGetExercise,
   type ExerciseSlot,
@@ -92,7 +95,32 @@ export type PhotoContext =
   | { kind: "no-photos" }
   | { kind: "not-visible" }
   | { kind: "unclear" }
-  | { kind: "seen"; relation: "behind" | "in-line" | "ahead"; limited: boolean; note?: string };
+  | {
+      kind: "seen";
+      /** "possibly-behind": read as behind, but not confidently enough to raise the target. */
+      relation: "behind" | "possibly-behind" | "in-line" | "ahead";
+      limited: boolean;
+      note?: string;
+    };
+
+/**
+ * One judgment per muscle from photos (or your goal) and training together.
+ * "both": looks behind and under target. "training-gap": under target, photos
+ * don't flag it. "photo-gap": looks behind, but volume is already on target.
+ */
+export type Verdict = "both" | "training-gap" | "photo-gap" | "on-track" | "ahead";
+
+const VERDICT_RANK: Record<Verdict, number> = {
+  both: 0,
+  "training-gap": 1,
+  "photo-gap": 2,
+  "on-track": 3,
+  ahead: 4,
+};
+
+export function needsAttention(row: RegionView): boolean {
+  return VERDICT_RANK[row.verdict] <= VERDICT_RANK["photo-gap"];
+}
 
 export type Contribution = {
   name: string;
@@ -113,6 +141,13 @@ export type RegionView = {
   priority: RegionPriority;
   goalSource: GoalSource;
   photo: PhotoContext;
+  verdict: Verdict;
+  /** Short combined read, e.g. "Behind in photos · under target". */
+  summary: string;
+  /** Full sentence combining the photo (or goal) signal with training volume. */
+  assessment: string;
+  /** Coverage points this region costs, weighted by priority; higher matters more. */
+  drag: number;
   contributions: Contribution[];
   /** effectiveSets / targetMin; lower is further below. */
   fill: number;
@@ -135,25 +170,114 @@ function photoContext(region: RegionId, physique: PhysiqueResult | null): PhotoC
   if (!row) return { kind: "not-visible" };
   if (row.confidence < 0.45) return { kind: "unclear" };
   const tag = physique.lagMap[region];
-  return {
-    kind: "seen",
-    relation: tag === "lagging" ? "behind" : tag === "overdeveloped" ? "ahead" : "in-line",
-    limited: row.confidence < 0.7,
-    note: row.note,
-  };
+  const relation =
+    tag === "lagging"
+      ? "behind"
+      : tag === "overdeveloped"
+        ? "ahead"
+        : row.development <= 2.5
+          ? "possibly-behind"
+          : "in-line";
+  return { kind: "seen", relation, limited: row.confidence < 0.7, note: row.note };
 }
 
 export function photoContextLabel(photo: PhotoContext): string {
   if (photo.kind === "no-photos") return "No photos added";
   if (photo.kind === "not-visible") return "Not visible in your photos";
   if (photo.kind === "unclear") return "Too unclear in your photos to judge";
-  const relation =
-    photo.relation === "behind"
-      ? "Looks behind the rest of your physique"
-      : photo.relation === "ahead"
-        ? "Looks ahead of the rest of your physique"
-        : "In line with the rest of your physique";
-  return photo.limited ? `${relation} (limited view)` : relation;
+  const relation = {
+    behind: "Looks behind the rest of your physique",
+    "possibly-behind": "Possibly behind, but too uncertain to raise its target",
+    ahead: "Looks ahead of the rest of your physique",
+    "in-line": "In line with the rest of your physique",
+  }[photo.relation];
+  return photo.limited && photo.relation !== "possibly-behind" ? `${relation} (limited view)` : relation;
+}
+
+function assessRegion(
+  row: RegionBreakdown,
+  photo: PhotoContext,
+  goalSource: GoalSource,
+): Pick<RegionView, "verdict" | "summary" | "assessment"> {
+  const plural = regionVerb(row.region) === "are";
+  const pick = (one: string, many: string) => (plural ? many : one);
+  const name = row.label;
+  const lower = name.toLowerCase();
+  const range = `${row.targetLow}–${row.targetHigh}`;
+  const sets = `${row.effectiveSets} effective sets a week`;
+  const mine = goalSource === "you";
+  const limited = photo.kind === "seen" && photo.limited ? " (limited view)" : "";
+
+  if (row.priority === "overdeveloped") {
+    return {
+      verdict: "ahead",
+      summary: mine ? "Lower priority (your goal)" : "Ahead in photos",
+      assessment: mine
+        ? `You set ${lower} to lower priority, so ${pick("its", "their")} target is ${range}. ${pick("It gets", "They get")} ${sets}.`
+        : `${name} ${pick("looks", "look")} ahead of the rest of your physique in your photos${limited}, so ${pick("its", "their")} target is lower (${range}). ${pick("It gets", "They get")} ${sets}.`,
+    };
+  }
+
+  const below = row.effectiveSets < row.targetLow;
+
+  if (row.priority === "lagging") {
+    const signal = mine
+      ? `${name} ${pick("is", "are")} a priority you set`
+      : `${name} ${pick("looks", "look")} behind in your photos${limited}`;
+    if (below) {
+      return {
+        verdict: "both",
+        summary: mine ? "Your priority · under target" : "Behind in photos · under target",
+        assessment: `${signal} and ${pick("gets", "get")} ${sets} against a ${range} target. ${
+          mine ? "Your goal and your training both point here." : "Your photos and your training both point here."
+        }`,
+      };
+    }
+    return {
+      verdict: "photo-gap",
+      summary: mine ? "Your priority · volume on target" : "Behind in photos · volume on target",
+      assessment: `${signal}, but training already reaches ${pick("its", "their")} priority range (${sets}). Volume isn't the gap here. Effort and progression on the exercises you already do matter more.`,
+    };
+  }
+
+  let photoRead: string | null = null;
+  if (mine) photoRead = `You set ${lower} to maintain`;
+  else if (photo.kind === "seen" && photo.relation === "possibly-behind")
+    photoRead = `${name} might be behind in your photos, but the read is too uncertain to raise ${pick("its", "their")} target`;
+  else if (photo.kind === "seen")
+    photoRead = `${name} ${pick("looks", "look")} in line with the rest of your physique in your photos${limited}`;
+  else if (photo.kind === "not-visible") photoRead = `${name} ${pick("isn't", "aren't")} visible in your photos`;
+  else if (photo.kind === "unclear") photoRead = `${name} ${pick("is", "are")} too unclear in your photos to judge`;
+
+  if (below) {
+    const subject = photoRead ? `${photoRead}, but ${pick("it gets", "they get")}` : `${name} ${pick("gets", "get")}`;
+    return {
+      verdict: "training-gap",
+      summary:
+        photo.kind === "seen" && !mine
+          ? photo.relation === "possibly-behind"
+            ? "Possibly behind in photos · under target"
+            : "In line in photos · under target"
+          : "Under target",
+      assessment: `${subject} ${sets} against a ${range} target.${
+        photo.kind === "seen" && photo.relation === "in-line" && !mine
+          ? " Less urgent than a muscle that looks behind, but worth topping up."
+          : ""
+      }`,
+    };
+  }
+
+  const volume =
+    row.effectiveSets > row.targetHigh
+      ? `${pick("gets", "get")} ${sets}, above the ${range} target`
+      : `${pick("gets", "get")} ${sets}, within the ${range} target`;
+  return {
+    verdict: "on-track",
+    summary: "On track",
+    assessment: photoRead
+      ? `${photoRead}, and ${pick("it", "they")} ${volume}.`
+      : `${name} ${volume}.`,
+  };
 }
 
 function contributionsFor(split: Split, region: RegionId): Contribution[] {
@@ -192,7 +316,10 @@ export function buildRegionViews(input: {
       : physique?.lagMap[row.region]
         ? "photos"
         : "default";
+    const photo = photoContext(row.region, physique);
     return {
+      ...assessRegion(row, photo, goalSource),
+      drag: round1(priorityWeight(row.priority) * Math.max(0, 10 - row.coverageScore)),
       id: row.region,
       name: row.label,
       bodyArea: GROUP_AREA[REGION_META[row.region].group] ?? "Core",
@@ -203,7 +330,7 @@ export function buildRegionViews(input: {
       status: regionStatus(row),
       priority: row.priority ?? "maintain",
       goalSource,
-      photo: photoContext(row.region, physique),
+      photo,
       contributions: contributionsFor(split, row.region),
       fill: row.effectiveSets / Math.max(row.targetLow, 1),
       recommendationIds: recommendations.filter((rec) => rec.region === row.region).map((rec) => rec.id),
@@ -217,7 +344,12 @@ export function volumeAxisMax(regions: RegionView[]): number {
   return Math.ceil((peak + 1) / 5) * 5;
 }
 
-/** Below-target first (priorities, then furthest below), above-target last. */
+/** The combined ranking used everywhere a list of muscles is shown. */
+export function rankRegions(a: RegionView, b: RegionView): number {
+  return VERDICT_RANK[a.verdict] - VERDICT_RANK[b.verdict] || b.drag - a.drag || a.name.localeCompare(b.name);
+}
+
+/** Below-target first (in combined order), above-target last. */
 export function compareRegions(a: RegionView, b: RegionView): number {
   const rank: Record<RegionStatus, number> = {
     "below-target": 0,
@@ -226,17 +358,45 @@ export function compareRegions(a: RegionView, b: RegionView): number {
     "above-target": 3,
   };
   if (rank[a.status] !== rank[b.status]) return rank[a.status] - rank[b.status];
-  if (a.status === "below-target") {
-    const pa = a.priority === "lagging" ? 0 : 1;
-    const pb = b.priority === "lagging" ? 0 : 1;
-    return pa - pb || a.fill - b.fill;
-  }
   if (a.status === "above-target") return b.fill - a.fill;
-  return a.name.localeCompare(b.name);
+  return rankRegions(a, b);
 }
 
 export function focusRegions(regions: RegionView[], limit = 3): RegionView[] {
-  return regions.filter((row) => row.status === "below-target").sort(compareRegions).slice(0, limit);
+  return regions.filter(needsAttention).sort(rankRegions).slice(0, limit);
+}
+
+/** Puts recommendations for higher-ranked regions first; the planner's order breaks ties. */
+export function orderRecommendations(recommendations: Recommendation[], regions: RegionView[]): Recommendation[] {
+  const position = new Map([...regions].sort(rankRegions).map((row, index) => [row.id, index]));
+  const rankOf = (rec: Recommendation) => {
+    const row = rec.region ? regions.find((item) => item.id === rec.region) : undefined;
+    return row && needsAttention(row) ? (position.get(row.id) ?? regions.length) : regions.length;
+  };
+  return recommendations
+    .map((rec, index) => ({ rec, index }))
+    .sort((a, b) => rankOf(a.rec) - rankOf(b.rec) || a.index - b.index)
+    .map(({ rec }) => rec);
+}
+
+/** "Why this helps" built from the same combined read the regions page shows. */
+export function explainRecommendation(rec: Recommendation, regions: RegionView[]): string {
+  const row = rec.region ? regions.find((item) => item.id === rec.region) : undefined;
+  if (!row || !needsAttention(row)) return rec.why;
+  const first = rec.rows[0];
+  const plural = regionVerb(row.id) === "are";
+  switch (rec.kind) {
+    case "add":
+      return row.contributions.some((item) => item.directSets > 0)
+        ? `${row.assessment} Another day of direct work adds weekly volume without making one session much longer.`
+        : `${row.assessment} Nothing in your split trains ${plural ? "them" : "it"} directly yet.`;
+    case "add_sets":
+      return `${row.assessment} You already do ${first?.current?.name ?? "an exercise for this"}, so adding sets there is the simplest fix.`;
+    case "swap":
+      return `${row.assessment} ${first?.current?.name ?? "The current exercise"} mostly trains a neighboring muscle. Same sets, same session length.`;
+    default:
+      return rec.why;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -428,6 +588,59 @@ function joinNames(names: string[]): string {
   return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
 
+function capitalize(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** Two sentences at most, in combined order: agreed gaps, then training-only, then photo-only. */
+function coverageTakeaway(focus: RegionView[], withPhotos: boolean): string {
+  const group = (verdict: Verdict) => focus.filter((row) => row.verdict === verdict).slice(0, 2);
+  const describe = (rows: RegionView[]) => {
+    const many = rows.length > 1 || regionVerb(rows[0].id) === "are";
+    return {
+      names: capitalize(joinNames(rows.map((row) => row.name.toLowerCase()))),
+      pick: (one: string, other: string) => (many ? other : one),
+    };
+  };
+  const sentences: string[] = [];
+
+  const both = group("both");
+  if (both.length > 0) {
+    const { names, pick } = describe(both);
+    const fromPhotos = both.every((row) => row.goalSource === "photos");
+    const fromYou = both.every((row) => row.goalSource === "you");
+    sentences.push(
+      fromPhotos
+        ? `Your photos and your training agree on ${names.toLowerCase()}: ${pick("it looks", "they look")} behind and ${pick("gets", "get")} fewer sets than ${pick("its", "their")} target.`
+        : fromYou
+          ? `${names} ${pick("is a priority", "are priorities")} you set and ${pick("is", "are")} under target in your training.`
+          : `${names} ${pick("is", "are")} flagged by your photos or goals and under target in your training.`,
+    );
+  }
+
+  const gap = group("training-gap");
+  if (gap.length > 0) {
+    const { names, pick } = describe(gap);
+    sentences.push(
+      withPhotos
+        ? `${names} ${pick("isn't", "aren't")} flagged in your photos, but ${pick("gets", "get")} fewer sets than ${pick("its", "their")} weekly target.`
+        : `${names} ${pick("gets", "get")} fewer weekly sets than ${pick("its", "their")} target.`,
+    );
+  }
+
+  const photoGap = group("photo-gap");
+  if (photoGap.length > 0) {
+    const { names, pick } = describe(photoGap);
+    sentences.push(
+      `${names} ${pick("looks", "look")} behind in your photos even though training already reaches ${pick("its", "their")} priority range.`,
+    );
+  }
+
+  return sentences.length > 0
+    ? sentences.slice(0, 2).join(" ")
+    : "Your split gives each of your priorities work within its target range.";
+}
+
 function bestRecommendationFor(metric: Metric, recommendations: Recommendation[]): Recommendation | undefined {
   return [...recommendations]
     .filter((rec) => rec.impact[metric] >= 0.1)
@@ -447,21 +660,14 @@ export function metricStories(input: {
   const goalsSet = Object.keys(overrides).length > 0;
 
   // Coverage
-  const below = regions.filter((row) => row.status === "below-target").sort(compareRegions);
-  const belowPriorities = below.filter((row) => row.priority === "lagging");
-  const coverageNames = (belowPriorities.length > 0 ? belowPriorities : below)
-    .slice(0, 2)
-    .map((row) => row.name.toLowerCase());
-  const coverageRec = bestRecommendationFor("coverage", recommendations);
+  const focus = regions.filter(needsAttention).sort(rankRegions);
+  const coverageRec = recommendations.find((rec) => rec.impact.coverage >= 0.1);
   const coverage: MetricStory = {
-    takeaway:
-      coverageNames.length > 0
-        ? `Your ${joinNames(coverageNames)} could use more attention in your current split.`
-        : "Your split gives each of your priorities work within its target range.",
+    takeaway: coverageTakeaway(focus, withPhotos),
     opportunity: coverageRec
       ? coverageRec.headline
-      : below[0]
-        ? `Bring ${below[0].name.toLowerCase()} closer to its target range.`
+      : focus[0]
+        ? `Bring ${focus[0].name.toLowerCase()} closer to ${regionVerb(focus[0].id) === "are" ? "their" : "its"} target range.`
         : undefined,
     evidence: [
       "Based on your Hevy routines",
@@ -470,7 +676,7 @@ export function metricStories(input: {
     ]
       .filter(Boolean)
       .join(" + "),
-    how: "Each muscle's weekly effective sets in your routines are compared with a target range. Priority muscles get a higher target and count three times as much toward this score.",
+    how: "Each muscle is judged on two things together: how it looks in your photos (or the goal you set) and its weekly effective sets in your routines. Muscles that look behind get a higher target and count three times as much toward this score.",
     limitations: [
       "Uses the sets saved in your routines, not what you logged in a given week.",
       withPhotos
@@ -546,6 +752,33 @@ export function metricStories(input: {
 }
 
 // ---------------------------------------------------------------------------
+// Assembly
+
+/** Everything the report screens show, derived from one set of inputs. */
+export function buildReport(input: {
+  hevy: HevyPayload;
+  split: Split;
+  lagMap: LagMap;
+  physique: PhysiqueResult | null;
+  overrides: LagMap;
+}) {
+  const { hevy, split, lagMap, physique, overrides } = input;
+  const scoring = { split, lagMap, history: hevy.history };
+  const grade = gradeSplit(scoring);
+  const baseline = gradeSplit({ ...scoring, lagMap: {} });
+  const plan = buildPlan(scoring);
+  const planned = buildRecommendations({ plan, grade, ...scoring });
+  const regions = buildRegionViews({ grade, split, physique, overrides, recommendations: planned });
+  const recommendations = orderRecommendations(planned, regions).map((rec) => ({
+    ...rec,
+    why: explainRecommendation(rec, regions),
+  }));
+  const stories = metricStories({ grade, regions, recommendations, hevy, physique, overrides });
+  const details = reportDetails({ hevy, physique, regions });
+  return { grade, baseline, plan, recommendations, regions, stories, details };
+}
+
+// ---------------------------------------------------------------------------
 // Overview copy
 
 export function overviewHeadline(overall: number): string {
@@ -555,18 +788,19 @@ export function overviewHeadline(overall: number): string {
   return "Plenty of room to grow. Start with one change.";
 }
 
-export function overviewSubline(regions: RegionView[], recommendations: Recommendation[]): string {
-  const top = recommendations[0];
-  if (top?.region) {
-    const names = [top.region, ...recommendations.slice(1).map((rec) => rec.region)]
-      .filter((region, index, all): region is RegionId => Boolean(region) && all.indexOf(region) === index)
-      .slice(0, 2)
-      .map((region) => REGION_META[region].label.toLowerCase());
-    return `Your biggest opportunity is giving your ${joinNames(names)} more attention.`;
+export function overviewSubline(regions: RegionView[]): string {
+  const focus = focusRegions(regions, 2);
+  if (focus.length === 0) return "Your split is within target across the board. Keep logging to track progression.";
+  const names = joinNames(focus.map((row) => row.name.toLowerCase()));
+  if (focus.every((row) => row.verdict === "both")) {
+    const source = focus.every((row) => row.goalSource === "photos")
+      ? "your photos and your training"
+      : focus.every((row) => row.goalSource === "you")
+        ? "your goals and your training"
+        : "your photos, goals, and training";
+    return `Your biggest opportunity is your ${names}, where ${source} both point.`;
   }
-  const below = focusRegions(regions, 2).map((row) => row.name.toLowerCase());
-  if (below.length > 0) return `Your ${joinNames(below)} ${below.length > 1 ? "are" : "is"} below target.`;
-  return "Your split is within target across the board. Keep logging to track progression.";
+  return `Your biggest opportunity is giving your ${names} more attention.`;
 }
 
 // ---------------------------------------------------------------------------

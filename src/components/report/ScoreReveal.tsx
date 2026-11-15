@@ -132,6 +132,25 @@ export function ScoreReveal() {
           </details>
         </section>
 
+        {last ? (
+          <div className="hg-rise mt-8 flex items-center justify-between gap-6 rounded-card border border-line bg-surface px-5 py-4">
+            <span className="flex flex-col gap-1">
+              <span className="text-[15px] font-medium text-ink">Overall score</span>
+              <StatusLabel tone={scoreTone(grade.overall)}>{scoreStatus(grade.overall)}</StatusLabel>
+            </span>
+            <span className="flex items-baseline gap-1.5">
+              <span
+                className={`text-[52px] font-semibold leading-none tabular-nums ${
+                  scoreTone(grade.overall) === "good" ? "text-good" : "text-warn"
+                }`}
+              >
+                {grade.overall.toFixed(1)}
+              </span>
+              <span className="text-ink-3">/ 10</span>
+            </span>
+          </div>
+        ) : null}
+
         <div className="mt-10 flex flex-col items-center gap-3">
           <div className="flex w-full items-center justify-center gap-3">
             {index > 0 ? (

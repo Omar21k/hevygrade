@@ -2,16 +2,7 @@
 
 import { loadHevySession, type HevyPayload } from "@/hevy/session";
 import { subscribeSession } from "@/lib/sessionStore";
-import {
-  buildPlan,
-  gradeSplit,
-  registerExercises,
-  type Grade,
-  type LagMap,
-  type Plan,
-  type RegionId,
-  type Split,
-} from "@/scoring";
+import { registerExercises, type Grade, type LagMap, type Plan, type RegionId, type Split } from "@/scoring";
 import { createContext, useCallback, useContext, useMemo, useSyncExternalStore, type ReactNode } from "react";
 import {
   loadLagOverrides,
@@ -24,10 +15,7 @@ import {
   type PlanChoices,
 } from "./state";
 import {
-  buildRecommendations,
-  buildRegionViews,
-  metricStories,
-  reportDetails,
+  buildReport,
   type Goal,
   type Metric,
   type MetricStory,
@@ -90,15 +78,7 @@ function useReportState(): ReportState & ReportActions {
 
   const core = useMemo(() => {
     if (!split || !hevy) return null;
-    const input = { split, lagMap, history: hevy.history };
-    const grade = gradeSplit(input);
-    const baseline = gradeSplit({ ...input, lagMap: {} });
-    const plan = buildPlan(input);
-    const recommendations = buildRecommendations({ plan, grade, ...input });
-    const regions = buildRegionViews({ grade, split, physique, overrides, recommendations });
-    const stories = metricStories({ grade, regions, recommendations, hevy, physique, overrides });
-    const details = reportDetails({ hevy, physique, regions });
-    return { grade, baseline, plan, recommendations, regions, stories, details };
+    return buildReport({ hevy, split, lagMap, physique, overrides });
   }, [split, hevy, lagMap, physique, overrides]);
 
   const setGoal = useCallback(

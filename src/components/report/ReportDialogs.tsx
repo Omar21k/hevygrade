@@ -2,18 +2,64 @@
 
 import { StatusLabel } from "@/components/ui";
 import type { ReportData } from "@/report/ReportContext";
-import { METRIC_LABEL, METRIC_PROMPT, scoreStatus, scoreTone, type Metric } from "@/report/view";
+import {
+  focusRegions,
+  METRIC_LABEL,
+  METRIC_PROMPT,
+  METRICS,
+  scoreStatus,
+  scoreTone,
+  type Metric,
+} from "@/report/view";
+import { OVERALL_FLOOR_MARGIN, OVERALL_WEIGHTS } from "@/scoring";
 
 const SEVERITY_RANK = { blocker: 0, warn: 1, info: 2 } as const;
 
+export function OverallExplanation({ data }: { data: ReportData }) {
+  const { grade } = data;
+  const blend = METRICS.reduce((sum, metric) => sum + OVERALL_WEIGHTS[metric] * grade[metric].score, 0);
+  const weakest = [...METRICS].sort((a, b) => grade[a].score - grade[b].score)[0];
+  const capped = blend - grade.overall >= 0.05;
+
+  return (
+    <div className="flex flex-col gap-5 text-[15px] leading-[24px]">
+      <p className="flex items-baseline gap-3">
+        <span className="text-[32px] font-semibold leading-[40px] tabular-nums">{grade.overall.toFixed(1)}</span>
+        <span className="text-ink-3">/ 10</span>
+        <StatusLabel tone={scoreTone(grade.overall)}>{scoreStatus(grade.overall)}</StatusLabel>
+      </p>
+      <p className="text-ink">A weighted blend of your three scores.</p>
+      <dl className="grid grid-cols-[1fr_auto_auto] gap-x-6 gap-y-2">
+        {METRICS.map((metric) => (
+          <div key={metric} className="contents">
+            <dt className="text-ink-2">{METRIC_LABEL[metric]}</dt>
+            <dd className="text-right tabular-nums text-ink">{grade[metric].score.toFixed(1)}</dd>
+            <dd className="text-right tabular-nums text-ink-3">× {Math.round(OVERALL_WEIGHTS[metric] * 100)}%</dd>
+          </div>
+        ))}
+      </dl>
+      <p className="text-ink-2">
+        The overall can&apos;t be more than {OVERALL_FLOOR_MARGIN} points above your lowest score, so one weak area
+        isn&apos;t hidden by the others.
+        {capped
+          ? ` Your blend is ${blend.toFixed(1)}, held to ${grade.overall.toFixed(1)} by ${METRIC_LABEL[weakest].toLowerCase()}.`
+          : ""}
+      </p>
+    </div>
+  );
+}
+
 export function ScoreExplanation({ metric, data }: { metric: Metric; data: ReportData }) {
-  const { grade, baseline, stories, physique, overrides } = data;
+  const { grade, baseline, stories, physique, overrides, regions } = data;
   const story = stories[metric];
   const score = grade[metric].score;
-  const findings = [...(metric === "coverage" ? (physique?.findings ?? []) : []), ...grade.findings]
-    .filter((finding) => finding.metric === metric && finding.severity !== "info")
-    .sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity])
-    .slice(0, 3);
+  const findings =
+    metric === "coverage"
+      ? focusRegions(regions, 4).map((row) => ({ id: row.id, title: `${row.name}: ${row.summary}`, detail: row.assessment }))
+      : grade.findings
+          .filter((finding) => finding.metric === metric && finding.severity !== "info")
+          .sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity])
+          .slice(0, 3);
   const contextual = physique?.status === "graded" || Object.keys(overrides).length > 0;
   const baselineScore = baseline[metric].score;
 

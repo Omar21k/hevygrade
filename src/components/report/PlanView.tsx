@@ -82,7 +82,7 @@ function RecommendationCard({
             {selected ? <span className="text-accent">✓ In your plan</span> : null}
             {position === 0 && !selected ? (
               <span className="rounded-full bg-accent/15 px-2.5 py-0.5 text-[12px] font-medium leading-[18px] text-accent">
-                Highest impact
+                Start here
               </span>
             ) : null}
             <span className="text-ink-3">{expanded ? "Hide" : "Details"}</span>
