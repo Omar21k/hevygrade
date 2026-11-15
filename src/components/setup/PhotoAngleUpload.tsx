@@ -4,7 +4,7 @@ import { buttonClass, Spinner } from "@/components/ui";
 import { looksLikeHeic } from "@/physique/image";
 import type { PhysiqueView } from "@/physique/types";
 import { useEffect, useId, useRef, useState } from "react";
-import { PoseOutline } from "./PoseOutline";
+import { PoseFigure } from "./PoseFigure";
 
 /** Matches the server's limit in /api/physique. */
 export const MAX_PHOTO_BYTES = 12_000_000;
@@ -42,7 +42,7 @@ function Thumbnail({ file }: { file: File }) {
 
   // Blob URLs can't go through next/image optimization.
   // eslint-disable-next-line @next/next/no-img-element
-  return <img ref={ref} alt="" className="h-28 w-full rounded-control object-contain" />;
+  return <img ref={ref} alt="" className="h-40 w-full rounded-control object-contain" />;
 }
 
 export function PhotoAngleUpload({
@@ -111,8 +111,8 @@ export function PhotoAngleUpload({
         {file ? <span className="sr-only"> photo added</span> : null}
       </p>
 
-      <div className="mt-3 flex h-28 items-center justify-center">
-        {busy ? <Spinner className="text-ink-3" /> : file ? <Thumbnail file={file} /> : <PoseOutline view={view} />}
+      <div className="mt-3 flex h-40 items-center justify-center">
+        {busy ? <Spinner className="text-ink-3" /> : file ? <Thumbnail file={file} /> : <PoseFigure view={view} />}
       </div>
 
       <input
