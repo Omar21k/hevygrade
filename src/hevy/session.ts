@@ -1,3 +1,4 @@
+import { readSessionJson, writeSessionJson } from "@/lib/sessionStore";
 import type { ExerciseDef, HistorySet, Split } from "@/scoring";
 
 export type HevyPayload = {
@@ -13,15 +14,9 @@ export type HevyPayload = {
 const KEY = "hevygrade.hevy";
 
 export function saveHevySession(payload: HevyPayload) {
-  sessionStorage.setItem(KEY, JSON.stringify(payload));
+  writeSessionJson(KEY, payload);
 }
 
 export function loadHevySession(): HevyPayload | null {
-  const raw = sessionStorage.getItem(KEY);
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw) as HevyPayload;
-  } catch {
-    return null;
-  }
+  return readSessionJson<HevyPayload>(KEY);
 }

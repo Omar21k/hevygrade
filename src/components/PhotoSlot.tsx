@@ -3,7 +3,7 @@
 import { BodyFigure } from "@/components/BodyFigure";
 import { looksLikeHeic } from "@/physique/image";
 import type { PhysiqueView } from "@/physique/types";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 async function asUploadFile(file: File): Promise<File> {
   const header = new Uint8Array(await file.slice(0, 16).arrayBuffer());
@@ -20,6 +20,20 @@ async function asUploadFile(file: File): Promise<File> {
   return new File([blob], name, { type: "image/jpeg" });
 }
 
+function PhotoPreview({ file }: { file: File }) {
+  const ref = useRef<HTMLImageElement>(null);
+
+  useEffect(() => {
+    const url = URL.createObjectURL(file);
+    if (ref.current) ref.current.src = url;
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+
+  // Blob URLs can't go through next/image optimization.
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img ref={ref} alt="" className="h-28 w-auto max-w-full object-contain" />;
+}
+
 export function PhotoSlot({
   view,
   file,
@@ -32,17 +46,6 @@ export function PhotoSlot({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [over, setOver] = useState(false);
-  const [preview, setPreview] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!file) {
-      setPreview(null);
-      return;
-    }
-    const url = URL.createObjectURL(file);
-    setPreview(url);
-    return () => URL.revokeObjectURL(url);
-  }, [file]);
 
   async function take(next?: File) {
     if (!next) return;
@@ -74,8 +77,8 @@ export function PhotoSlot({
       }}
     >
       <span className="text-base capitalize text-zinc-100">{view}</span>
-      {preview ? (
-        <img src={preview} alt="" className="h-28 w-auto max-w-full object-contain" />
+      {file ? (
+        <PhotoPreview file={file} />
       ) : (
         <BodyFigure view={view} />
       )}

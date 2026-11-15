@@ -1,5 +1,5 @@
 import type { Finding, LagMap } from "@/scoring/types";
-import { REGION_META, type RegionId } from "@/scoring/regions";
+import { REGION_META, regionVerb, type RegionId } from "@/scoring/regions";
 import type { PhysiqueAssessment, RegionDevelopment } from "./types";
 
 function mean(values: number[]): number {
@@ -43,7 +43,7 @@ export function lagMapFromPhysique(assessment: PhysiqueAssessment): {
         metric: "coverage",
         severity: row.development <= 2 ? "blocker" : "warn",
         region: row.region,
-        title: `${REGION_META[row.region].label} looks underdeveloped on the physique`,
+        title: `${REGION_META[row.region].label} ${regionVerb(row.region)} lagging in your photos`,
         detail:
           row.note?.trim() ||
           `Development ${row.development.toFixed(1)}/5 vs physique baseline ${baseline.toFixed(1)}. The split will be scored against this lag, not generic muscle coverage.`,

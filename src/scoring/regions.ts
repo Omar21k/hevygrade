@@ -167,6 +167,27 @@ export function targetsFor(
   return { mev, low: mavLow, high: mavHigh, mrv };
 }
 
+const PLURAL_REGIONS = new Set<RegionId>([
+  "lats",
+  "traps",
+  "erectors",
+  "delt_front",
+  "delt_side",
+  "delt_rear",
+  "biceps",
+  "triceps",
+  "forearms",
+  "quads",
+  "hamstrings",
+  "glutes",
+  "calves",
+  "abs",
+]);
+
+export function regionVerb(region: RegionId): "is" | "are" {
+  return PLURAL_REGIONS.has(region) ? "are" : "is";
+}
+
 export function priorityWeight(priority: RegionPriority | undefined): number {
   if (priority === "lagging") return 3;
   if (priority === "overdeveloped") return 0.35;

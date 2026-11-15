@@ -3,6 +3,7 @@ import { clamp, round1, weightedMean } from "./math";
 import {
   REGION_META,
   priorityWeight,
+  regionVerb,
   type RegionId,
 } from "./regions";
 import type {
@@ -83,7 +84,7 @@ function scoreCoverage(
         metric: "coverage",
         severity: row.effectiveSets < 2 ? "blocker" : "warn",
         region: row.region,
-        title: `${row.label} is lagging and under-covered`,
+        title: `${row.label} ${regionVerb(row.region)} lagging and under-trained`,
         detail: `${row.effectiveSets} effective sets/week vs a lagging target of ${row.targetLow}–${row.targetHigh}. ${
           needsPrimary
             ? "Nothing in the split is a primary movement for this region."
@@ -200,7 +201,7 @@ function scoreGrowth(
         metric: "growth",
         severity: "warn",
         region: row.region,
-        title: `${row.label} is only hit ${row.frequency}× / week`,
+        title: `${row.label} ${regionVerb(row.region) === "are" ? "get" : "gets"} hit only ${row.frequency}× a week`,
         detail:
           "Lagging tissue usually grows faster with 2+ exposures per week than with one junk-filled session.",
         suggestedChange: `Split ${row.label.toLowerCase()} work across two days instead of stacking it on one.`,
@@ -269,7 +270,7 @@ function scoreRecovery(
         metric: "recovery",
         severity: "warn",
         region: row.region,
-        title: `${row.label} is past recoverable volume`,
+        title: `${row.label} ${regionVerb(row.region)} past recoverable volume`,
         detail: `${row.effectiveSets} effective sets/week vs MRV ~${row.mrv}. Extra sets here steal recovery from the rest of the split.`,
         suggestedChange: `Cut ${row.label.toLowerCase()} toward ${row.targetHigh} sets and keep the hard ones.`,
       });
@@ -365,7 +366,7 @@ function consecutiveOverlap(
           metric: "recovery",
           severity: "warn",
           region,
-          title: `${row?.label ?? region} is trained on back-to-back days`,
+          title: `${row?.label ?? region} ${regionVerb(region)} trained on back-to-back days`,
           detail: `${days[a].title} and ${days[b].title} both include primary work.`,
           suggestedChange: "Put a rest or an unrelated session between those days.",
         });
