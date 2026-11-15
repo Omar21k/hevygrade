@@ -847,8 +847,11 @@ const PHOTO_PRAISE: Partial<Record<RegionId, string>> = {
  * does not count as a compliment here.
  */
 export function strengthLines(physique: PhysiqueResult | null): string[] {
-  if (!physique || physique.status !== "graded" || !physique.assessment) {
+  if (!physique || physique.status !== "graded") {
     return ["No photos this time, so this stays quiet. The scores come from your routines."];
+  }
+  if (!physique.assessment) {
+    return ["Your photos were uploaded, but the read didn't save. Run them again from the photos step."];
   }
   const rows = physique.assessment.developments.filter(
     (row) => row.confidence >= 0.55 && Number.isFinite(row.development) && PHOTO_PRAISE[row.region],

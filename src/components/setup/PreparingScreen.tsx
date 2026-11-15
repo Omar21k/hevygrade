@@ -1,15 +1,8 @@
 "use client";
 
 import { Button, Wordmark } from "@/components/ui";
-import {
-  clearPendingPhotos,
-  hasPendingPhotos,
-  pendingPhotoViews,
-  postPendingPhotos,
-} from "@/physique/pendingAnalysis";
-import type { PhysiqueAssessment } from "@/physique/types";
+import { clearPendingPhotos, hasPendingPhotos, postPendingPhotos } from "@/physique/pendingAnalysis";
 import { resetReportProgress, saveLagOverrides, savePhysique } from "@/report/state";
-import type { Finding, LagMap } from "@/scoring";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
@@ -50,32 +43,27 @@ export function PreparingScreen() {
     let cancelled = false;
     (async () => {
       try {
-        const response = await postPendingPhotos();
-        const payload = (await response.json().catch(() => ({}))) as {
-          error?: string;
-          assessment?: PhysiqueAssessment;
-          lagMap?: LagMap;
-          findings?: Finding[];
-        };
-        if (!response.ok) {
+        const result = await postPendingPhotos();
+        if (cancelled) return;
+        if (!result.ok || !result.payload.assessment) {
           throw new Error(
-            response.status === 501
+            result.status === 501
               ? "Photo analysis isn't set up on this server yet, so it can't read photos."
-              : (payload.error ?? "Photo analysis failed."),
+              : (result.payload.error ?? "Photo analysis came back without a read."),
           );
         }
-        const wait = reduced ? 0 : Math.max(0, MIN_MS - (performance.now() - started));
-        await new Promise((resolve) => window.setTimeout(resolve, wait));
-        if (cancelled) return;
         savePhysique({
           status: "graded",
-          lagMap: payload.lagMap ?? {},
-          findings: payload.findings ?? [],
-          assessment: payload.assessment,
-          views: pendingPhotoViews(),
+          lagMap: result.payload.lagMap ?? {},
+          findings: result.payload.findings ?? [],
+          assessment: result.payload.assessment,
+          views: result.views,
         });
         saveLagOverrides({});
         resetReportProgress();
+        const wait = reduced ? 0 : Math.max(0, MIN_MS - (performance.now() - started));
+        await new Promise((resolve) => window.setTimeout(resolve, wait));
+        if (cancelled) return;
         clearPendingPhotos();
         router.replace("/reveal");
       } catch (caught) {
