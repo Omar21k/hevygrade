@@ -145,8 +145,19 @@ export const MAJOR_PHYSIQUE_REGIONS: RegionId[] = [
   "triceps",
   "quads",
   "hamstrings",
-  "glutes",
 ];
+
+/**
+ * Muscles many male lifters rarely train directly and usually don't want called
+ * out in photo-led feedback unless the read is unmistakable.
+ */
+export const LOW_AESTHETIC_PRIORITY_REGIONS: RegionId[] = ["glutes", "calves", "forearms"];
+
+export function aestheticFeedbackWeight(region: RegionId): number {
+  if (LOW_AESTHETIC_PRIORITY_REGIONS.includes(region)) return 0.3;
+  if (MAJOR_PHYSIQUE_REGIONS.includes(region)) return 1;
+  return 0.65;
+}
 
 export function targetsFor(
   region: RegionId,

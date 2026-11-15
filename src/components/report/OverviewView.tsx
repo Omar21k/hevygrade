@@ -58,27 +58,25 @@ export function OverviewView() {
             type="button"
             onClick={() => setOverallOpen(true)}
             aria-haspopup="dialog"
-            className="group flex shrink-0 items-center justify-between gap-6 rounded-card border border-line bg-surface px-5 py-4 text-left transition-colors hover:border-ink-3/60 hover:bg-raised md:min-w-[220px] md:flex-col md:items-start md:gap-1 md:px-6 md:py-5"
+            className="group flex shrink-0 flex-col items-start gap-1 text-left transition-colors hover:text-ink md:items-end md:text-right"
           >
-            <span className="flex flex-col gap-1">
-              <span className="flex items-center gap-2 text-[15px] font-medium text-ink">
-                Overall score
-                <span aria-hidden className="text-ink-3 transition-colors group-hover:text-accent">
-                  ↗
-                </span>
+            <span className="flex items-center gap-2 text-[13px] font-medium tracking-wide text-ink-3">
+              Overall
+              <span aria-hidden className="transition-colors group-hover:text-accent">
+                ↗
               </span>
-              <StatusLabel tone={overallTone}>{scoreStatus(grade.overall)}</StatusLabel>
             </span>
-            <span className="flex items-baseline gap-1.5 md:order-first md:mb-1">
+            <span className="flex items-baseline gap-1">
               <span
-                className={`text-[52px] font-semibold leading-none tabular-nums md:text-[64px] ${
+                className={`text-[28px] font-medium leading-none tabular-nums md:text-[32px] ${
                   overallTone === "good" ? "text-good" : "text-warn"
                 }`}
               >
                 {grade.overall.toFixed(1)}
               </span>
-              <span className="text-ink-3">/ 10</span>
+              <span className="text-[14px] text-ink-3">/ 10</span>
             </span>
+            <StatusLabel tone={overallTone}>{scoreStatus(grade.overall)}</StatusLabel>
             <span className="sr-only">. How the overall score is calculated.</span>
           </button>
         </div>

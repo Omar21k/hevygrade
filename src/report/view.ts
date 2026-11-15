@@ -1,8 +1,10 @@
 import type { HevyPayload } from "@/hevy/session";
 import {
   applyChanges,
+  aestheticFeedbackWeight,
   buildPlan,
   gradeSplit,
+  LOW_AESTHETIC_PRIORITY_REGIONS,
   MAJOR_PHYSIQUE_REGIONS,
   priorityWeight,
   PROGRESSION_WINDOW_DAYS,
@@ -224,22 +226,24 @@ function assessRegion(
   const below = row.effectiveSets < row.targetLow;
 
   if (row.priority === "lagging") {
-    const signal = mine
+    const photoLead = mine
       ? `${name} ${pick("is", "are")} a priority you set`
       : `${name} ${pick("looks", "look")} behind in your photos${limited}`;
     if (below) {
       return {
         verdict: "both",
         summary: mine ? "Your priority · under target" : "Behind in photos · under target",
-        assessment: `${signal} and ${pick("gets", "get")} ${sets} against a ${range} target. ${
-          mine ? "Your goal and your training both point here." : "Your photos and your training both point here."
-        }`,
+        assessment: mine
+          ? `${photoLead} and ${pick("gets", "get")} only ${sets} against a ${range} target. Your goal and your training both point here.`
+          : `${photoLead} — that's the main gap. Your Hevy split only gives ${sets} (target ${range}), which may be why ${pick("it", "they")} haven't caught up.`,
       };
     }
     return {
       verdict: "photo-gap",
       summary: mine ? "Your priority · volume on target" : "Behind in photos · volume on target",
-      assessment: `${signal}, but training already reaches ${pick("its", "their")} priority range (${sets}). Volume isn't the gap here. Effort and progression on the exercises you already do matter more.`,
+      assessment: mine
+        ? `${photoLead}, and training already reaches ${pick("its", "their")} priority range (${sets}). Volume isn't the gap here.`
+        : `${photoLead}, but your routines already hit the raised target (${sets}). The photo lag is probably effort, selection, or progression — not more sets on paper.`,
     };
   }
 
@@ -253,7 +257,14 @@ function assessRegion(
   else if (photo.kind === "unclear") photoRead = `${name} ${pick("is", "are")} too unclear in your photos to judge`;
 
   if (below) {
-    const subject = photoRead ? `${photoRead}, but ${pick("it gets", "they get")}` : `${name} ${pick("gets", "get")}`;
+    const trainingBit = `${pick("gets", "get")} only ${sets} against a ${range} target in your Hevy routines`;
+    const assessment = photoRead
+      ? photo.kind === "seen" && photo.relation === "in-line" && !mine
+        ? `${photoRead}. Training is still low (${sets} vs ${range}) — secondary to anything your photos flag, but worth topping up.`
+        : photo.kind === "seen" && photo.relation === "possibly-behind" && !mine
+          ? `${photoRead}. ${name} ${trainingBit}, which may be contributing.`
+          : `${photoRead}. Separately, ${name.toLowerCase()} ${trainingBit}.`
+      : `${name} ${trainingBit}.`;
     return {
       verdict: "training-gap",
       summary:
@@ -262,11 +273,7 @@ function assessRegion(
             ? "Possibly behind in photos · under target"
             : "In line in photos · under target"
           : "Under target",
-      assessment: `${subject} ${sets} against a ${range} target.${
-        photo.kind === "seen" && photo.relation === "in-line" && !mine
-          ? " Less urgent than a muscle that looks behind, but worth topping up."
-          : ""
-      }`,
+      assessment,
     };
   }
 
@@ -324,6 +331,7 @@ export function buildRegionViews(input: {
       ...assessRegion(row, photo, goalSource),
       drag: round1(
         priorityWeight(row.priority) *
+          aestheticFeedbackWeight(row.region) *
           (MAJOR_PHYSIQUE_REGIONS.includes(row.region) ? MAJOR_REGION_WEIGHT : 1) *
           Math.max(0, 10 - row.coverageScore),
       ),
@@ -353,7 +361,22 @@ export function volumeAxisMax(regions: RegionView[]): number {
 
 /** The combined ranking used everywhere a list of muscles is shown. */
 export function rankRegions(a: RegionView, b: RegionView): number {
-  return VERDICT_RANK[a.verdict] - VERDICT_RANK[b.verdict] || b.drag - a.drag || a.name.localeCompare(b.name);
+  const photoLead = (row: RegionView) =>
+    row.goalSource === "photos" && row.verdict !== "training-gap" ? 0 : 1;
+  return (
+    VERDICT_RANK[a.verdict] - VERDICT_RANK[b.verdict] ||
+    photoLead(a) - photoLead(b) ||
+    b.drag - a.drag ||
+    a.name.localeCompare(b.name)
+  );
+}
+
+/** Photo-led lists skip low-priority aesthetic muscles when clearer gaps exist. */
+function feedbackFocusPool(regions: RegionView[]): RegionView[] {
+  const attention = regions.filter(needsAttention).sort(rankRegions);
+  const primary = attention.filter((row) => !LOW_AESTHETIC_PRIORITY_REGIONS.includes(row.id));
+  const deprioritized = attention.filter((row) => LOW_AESTHETIC_PRIORITY_REGIONS.includes(row.id));
+  return primary.length > 0 ? [...primary, ...deprioritized] : attention;
 }
 
 /** Below-target first (in combined order), above-target last. */
@@ -370,7 +393,7 @@ export function compareRegions(a: RegionView, b: RegionView): number {
 }
 
 export function focusRegions(regions: RegionView[], limit = 4): RegionView[] {
-  return regions.filter(needsAttention).sort(rankRegions).slice(0, limit);
+  return feedbackFocusPool(regions).slice(0, limit);
 }
 
 /** Puts recommendations for higher-ranked regions first; the planner's order breaks ties. */
@@ -599,9 +622,14 @@ function capitalize(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-/** Two sentences at most, in combined order: agreed gaps, then training-only, then photo-only. */
+/** Two sentences at most; photo-flagged muscles first, training volume as supporting context. */
 function coverageTakeaway(focus: RegionView[], withPhotos: boolean): string {
-  const group = (verdict: Verdict) => focus.filter((row) => row.verdict === verdict).slice(0, 2);
+  const pool = withPhotos ? feedbackFocusPool(focus) : focus.sort(rankRegions);
+  const group = (verdict: Verdict) => {
+    const rows = pool.filter((row) => row.verdict === verdict);
+    const primary = rows.filter((row) => !LOW_AESTHETIC_PRIORITY_REGIONS.includes(row.id));
+    return (primary.length > 0 ? primary : rows).slice(0, 2);
+  };
   const describe = (rows: RegionView[]) => {
     const many = rows.length > 1 || regionVerb(rows[0].id) === "are";
     return {
@@ -618,20 +646,10 @@ function coverageTakeaway(focus: RegionView[], withPhotos: boolean): string {
     const fromYou = both.every((row) => row.goalSource === "you");
     sentences.push(
       fromPhotos
-        ? `Your photos and your training agree on ${names.toLowerCase()}: ${pick("it looks", "they look")} behind and ${pick("gets", "get")} fewer sets than ${pick("its", "their")} target.`
+        ? `Your photos show ${names.toLowerCase()} behind the rest of your physique. Your Hevy split backs that up — ${pick("it's", "they're")} under the weekly target you'd want for a muscle that looks lagging.`
         : fromYou
           ? `${names} ${pick("is a priority", "are priorities")} you set and ${pick("is", "are")} under target in your training.`
           : `${names} ${pick("is", "are")} flagged by your photos or goals and under target in your training.`,
-    );
-  }
-
-  const gap = group("training-gap");
-  if (gap.length > 0) {
-    const { names, pick } = describe(gap);
-    sentences.push(
-      withPhotos
-        ? `${names} ${pick("isn't", "aren't")} flagged in your photos, but ${pick("gets", "get")} fewer sets than ${pick("its", "their")} weekly target.`
-        : `${names} ${pick("gets", "get")} fewer weekly sets than ${pick("its", "their")} target.`,
     );
   }
 
@@ -639,7 +657,17 @@ function coverageTakeaway(focus: RegionView[], withPhotos: boolean): string {
   if (photoGap.length > 0) {
     const { names, pick } = describe(photoGap);
     sentences.push(
-      `${names} ${pick("looks", "look")} behind in your photos even though training already reaches ${pick("its", "their")} priority range.`,
+      `${names} ${pick("looks", "look")} behind in your photos; routines already hit the raised target, so the fix is probably exercise choice or effort — not only more sets.`,
+    );
+  }
+
+  const gap = group("training-gap");
+  if (gap.length > 0 && sentences.length < 2) {
+    const { names, pick } = describe(gap);
+    sentences.push(
+      withPhotos
+        ? `${names} ${pick("isn't", "aren't")} the standout in your photos, but ${pick("gets", "get")} fewer weekly sets than ${pick("its", "their")} target — worth fixing after the photo-flagged gaps.`
+        : `${names} ${pick("gets", "get")} fewer weekly sets than ${pick("its", "their")} target.`,
     );
   }
 
@@ -666,7 +694,7 @@ export function metricStories(input: {
   const goalsSet = Object.keys(overrides).length > 0;
 
   // Coverage
-  const focus = regions.filter(needsAttention).sort(rankRegions);
+  const focus = feedbackFocusPool(regions);
   const coverageRec = recommendations.find((rec) => rec.impact.coverage >= 0.1);
   const coverage: MetricStory = {
     takeaway: coverageTakeaway(focus, withPhotos),
@@ -682,7 +710,7 @@ export function metricStories(input: {
     ]
       .filter(Boolean)
       .join(" + "),
-    how: "Each muscle is judged on two things together: how it looks in your photos (or the goal you set) and its weekly effective sets in your routines. Muscles that look behind get a higher target and count three times as much toward this score.",
+    how: "When you add photos, they pick which muscles matter most. Hevy volume is supporting context — it explains what might be causing a lag your photos show. Muscles that look behind get a higher target and count three times as much toward this score.",
     limitations: [
       "Uses the sets saved in your routines, not what you logged in a given week.",
       withPhotos
@@ -798,12 +826,13 @@ export function overviewSubline(regions: RegionView[]): string {
   const focus = focusRegions(regions, 2);
   if (focus.length === 0) return "Your split is within target across the board. Keep logging to track progression.";
   const names = joinNames(focus.map((row) => row.name.toLowerCase()));
+  if (focus.every((row) => row.goalSource === "photos")) {
+    return `Your photos highlight ${names} — training volume may be part of why. Start there before smaller muscles.`;
+  }
   if (focus.every((row) => row.verdict === "both")) {
-    const source = focus.every((row) => row.goalSource === "photos")
-      ? "your photos and your training"
-      : focus.every((row) => row.goalSource === "you")
-        ? "your goals and your training"
-        : "your photos, goals, and training";
+    const source = focus.every((row) => row.goalSource === "you")
+      ? "your goals and your training"
+      : "your photos and your training";
     return `Your biggest opportunity is your ${names}, where ${source} both point.`;
   }
   return `Your biggest opportunity is giving your ${names} more attention.`;

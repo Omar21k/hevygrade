@@ -1,5 +1,10 @@
 import type { Finding, LagMap } from "@/scoring/types";
-import { REGION_META, regionVerb, type RegionId } from "@/scoring/regions";
+import {
+  LOW_AESTHETIC_PRIORITY_REGIONS,
+  REGION_META,
+  regionVerb,
+  type RegionId,
+} from "@/scoring/regions";
 import type { PhysiqueAssessment, RegionDevelopment } from "./types";
 
 /**
@@ -40,7 +45,17 @@ export function lagMapFromPhysique(assessment: PhysiqueAssessment): {
     let priority: LagMap[RegionId] | undefined;
     const lagEvidence =
       !HARD_TO_SEE.has(row.region) || row.confidence >= HARD_TO_SEE_LAG_CONFIDENCE;
-    if ((row.development <= 2.2 || relative <= -0.7) && lagEvidence) priority = "lagging";
+    const lowAesthetic = LOW_AESTHETIC_PRIORITY_REGIONS.includes(row.region);
+    const lagThreshold = lowAesthetic
+      ? { abs: 1.8, relative: -1.0, confidence: 0.75 }
+      : { abs: 2.2, relative: -0.7, confidence: 0.45 };
+    if (
+      (row.development <= lagThreshold.abs || relative <= lagThreshold.relative) &&
+      lagEvidence &&
+      row.confidence >= lagThreshold.confidence
+    ) {
+      priority = "lagging";
+    }
     else if (row.development >= 4.3 && relative >= 0.8) priority = "overdeveloped";
     else priority = "maintain";
 

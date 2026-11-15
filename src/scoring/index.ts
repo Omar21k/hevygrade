@@ -11,7 +11,16 @@ export {
   registerExercises,
   resetRuntimeCatalog,
 } from "./catalog";
-export { REGION_IDS, REGION_META, MAJOR_PHYSIQUE_REGIONS, priorityWeight, regionVerb, targetsFor } from "./regions";
+export {
+  REGION_IDS,
+  REGION_META,
+  MAJOR_PHYSIQUE_REGIONS,
+  LOW_AESTHETIC_PRIORITY_REGIONS,
+  aestheticFeedbackWeight,
+  priorityWeight,
+  regionVerb,
+  targetsFor,
+} from "./regions";
 export { applyChanges, buildPlan, balanceScore, snapshot } from "./suggest";
 export type {
   ExerciseSlot,

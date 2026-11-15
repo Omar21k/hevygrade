@@ -17,7 +17,7 @@ const hevy: HevyPayload = {
   workoutCount: 0,
 };
 
-/** Photos read traps and glutes as clearly behind; everything else even. */
+/** Photos read chosen regions as clearly behind; everything else even. */
 function photosFlagging(behind: RegionId[]): PhysiqueResult {
   const assessment: PhysiqueAssessment = {
     viewsPresent: ["front", "side", "back"],
@@ -39,16 +39,16 @@ function report(physique: PhysiqueResult | null, overrides: LagMap = {}) {
 }
 
 describe("combined photo + training read", () => {
-  const physique = photosFlagging(["traps", "glutes"]);
+  const physique = photosFlagging(["lats", "glutes"]);
   const { regions, stories, recommendations } = report(physique);
   const byId = (id: RegionId) => regions.find((row) => row.id === id)!;
 
   it("judges each muscle on both signals", () => {
-    expect(byId("traps").verdict).toBe("both");
-    expect(byId("traps").assessment).toMatch(/behind in your photos.*effective sets/);
+    expect(byId("lats").verdict).toBe("both");
+    expect(byId("lats").assessment).toMatch(/behind in your photos.*Hevy/i);
     const trainingOnly = regions.filter((row) => row.verdict === "training-gap");
     expect(trainingOnly.length).toBeGreaterThan(0);
-    for (const row of trainingOnly) expect(row.assessment).toMatch(/in your photos.*but/);
+    for (const row of trainingOnly) expect(row.assessment).toMatch(/photos|Hevy|routines/i);
   });
 
   it("ranks agreed gaps ahead of training-only gaps everywhere", () => {
@@ -58,12 +58,20 @@ describe("combined photo + training read", () => {
     expect(lastBoth).toBeLessThan(firstTrainingOnly);
   });
 
-  it("names the photo-flagged muscles and the training-only gap in one coverage story", () => {
-    const [first, second] = stories.coverage.takeaway.split(". ");
-    expect(first).toMatch(/photos and your training agree/);
-    expect(first).toMatch(/traps|glutes/);
+  it("leads coverage with photo-flagged muscles, not low-priority glutes", () => {
+    const takeaway = stories.coverage.takeaway;
+    expect(takeaway).toMatch(/photos show.*lats/i);
+    expect(takeaway).not.toMatch(/glutes/i);
     const topTrainingOnly = focusRegions(regions, 10).find((row) => row.verdict === "training-gap")!;
-    expect(second.toLowerCase()).toContain(topTrainingOnly.name.toLowerCase());
+    expect(takeaway.toLowerCase()).toContain(topTrainingOnly.name.toLowerCase());
+  });
+
+  it("ranks lats ahead of glutes when both look behind", () => {
+    const focus = focusRegions(regions, 6);
+    const latsIndex = focus.findIndex((row) => row.id === "lats");
+    const glutesIndex = focus.findIndex((row) => row.id === "glutes");
+    expect(latsIndex).toBeGreaterThanOrEqual(0);
+    if (glutesIndex >= 0) expect(latsIndex).toBeLessThan(glutesIndex);
   });
 
   it("leads the plan with a muscle both signals agree on", () => {

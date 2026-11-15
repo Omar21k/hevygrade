@@ -20,7 +20,8 @@ Rules:
 - 1 = clearly lagging, 3 = in line with the rest of the body, 5 = dominant.
 - Brachialis / front-arm thickness: if the arm looks small or flat from the FRONT even with decent biceps peak, score brachialis low.
 - Upper chest: if the clavicular shelf is flat vs mid-chest, score chest_upper lower than chest_mid.
-- confidence < 0.45 for anything guessed.`;
+- confidence < 0.45 for anything guessed.
+- Typical male lifter goals: prioritize visible upper-body shape (lats, chest, shoulders, arms) over glutes/calves. Do not mark glutes lagging on a normal physique unless clearly underdeveloped; indirect leg work often covers them.`;
 
 export function parsePhysiqueJson(raw: string, viewsPresent: PhysiqueView[]): PhysiqueAssessment {
   const start = raw.indexOf("{");
