@@ -3,7 +3,6 @@ import {
   applyChanges,
   gradeSplit,
   REGION_META,
-  regionVerb,
   snapshot,
   tryGetExercise,
   type ExerciseSlot,
