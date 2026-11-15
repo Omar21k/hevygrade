@@ -4,7 +4,7 @@ import type { PhysiqueAssessment } from "@/physique/types";
 import { fixtures, REGION_IDS, type LagMap, type RegionId } from "@/scoring";
 import { describe, expect, it } from "vitest";
 import type { PhysiqueResult } from "./state";
-import { buildReport, focusRegions, needsAttention } from "./view";
+import { buildReport, focusRegions, needsAttention, strengthLines } from "./view";
 
 const split = fixtures.laggingUpperChest;
 const hevy: HevyPayload = {
@@ -49,6 +49,13 @@ describe("combined photo + training read", () => {
     const trainingOnly = regions.filter((row) => row.verdict === "training-gap");
     expect(trainingOnly.length).toBeGreaterThan(0);
     for (const row of trainingOnly) expect(row.assessment).toMatch(/photos|Hevy|routines/i);
+  });
+
+  it("keeps photo-lagging muscles out of the strength summary", () => {
+    const { regions, grade } = report(physique);
+    const text = strengthLines(regions, grade).join(" ").toLowerCase();
+    expect(text).not.toContain("lats");
+    expect(text.length).toBeGreaterThan(10);
   });
 
   it("says what's lacking is the photo muscle, and does not mention glutes or training-only gaps", () => {

@@ -121,6 +121,15 @@ dialog::backdrop {
   }
 }
 
+@keyframes hg-scan {
+  from {
+    transform: translateX(-130%);
+  }
+  to {
+    transform: translateX(340%);
+  }
+}
+
 .hg-rise {
   animation: hg-rise 0.4s cubic-bezier(0.2, 0.7, 0.2, 1) both;
 }
@@ -129,11 +138,20 @@ dialog::backdrop {
   animation: hg-spin 0.9s linear infinite;
 }
 
+.hg-scan {
+  animation: hg-scan 1.15s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .hg-rise {
     animation: none;
   }
   .hg-spin {
     animation-duration: 2.4s;
+  }
+  .hg-scan {
+    animation: none;
+    transform: none;
+    width: 100%;
   }
 }

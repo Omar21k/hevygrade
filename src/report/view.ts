@@ -825,6 +825,42 @@ export function overviewHeadline(overall: number): string {
   return "Plenty of room to grow. Start with one change.";
 }
 
+/** A few true positives, typed before the scores. Never invents a strength the data doesn't show. */
+export function strengthLines(regions: RegionView[], grade: Grade): string[] {
+  const lines: string[] = [];
+  const solid = regions
+    .filter(
+      (row) =>
+        MAJOR_PHYSIQUE_REGIONS.includes(row.id) &&
+        row.status !== "below-target" &&
+        row.verdict !== "both" &&
+        row.verdict !== "photo-gap",
+    )
+    .sort((a, b) => b.effectiveSets - a.effectiveSets)
+    .slice(0, 2);
+  if (solid.length > 0) {
+    const names = joinNames(solid.map((row) => row.name.toLowerCase()));
+    const plural = solid.length > 1 || regionVerb(solid[0].id) === "are";
+    lines.push(`Your ${names} ${plural ? "are" : "is"} already getting the work ${plural ? "they need" : "it needs"}.`);
+  }
+  if (grade.recovery.score >= 8) {
+    lines.push("Your week leaves room between hard sessions instead of stacking them.");
+  } else if (grade.growth.score >= 7 && grade.growth.parts.progression !== null && grade.growth.parts.progression >= 1) {
+    lines.push("Your logged lifts have been moving, not just sitting still.");
+  } else if (grade.growth.score >= 7) {
+    lines.push("The structure of your training already supports progression.");
+  }
+  const ahead = regions.find((row) => row.verdict === "ahead" && userCares(row));
+  if (ahead && lines.length < 3) {
+    const plural = regionVerb(ahead.id) === "are";
+    lines.push(`${ahead.name} already ${plural ? "stand" : "stands"} out in your photos.`);
+  }
+  if (lines.length === 0) {
+    lines.push("You have a full split saved in Hevy. That's a real base to build on.");
+  }
+  return lines.slice(0, 3);
+}
+
 export function overviewSubline(regions: RegionView[]): string {
   const focus = focusRegions(regions, 2);
   if (focus.length === 0) {

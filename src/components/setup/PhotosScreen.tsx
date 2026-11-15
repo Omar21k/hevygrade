@@ -1,19 +1,17 @@
 "use client";
 
 import { PhotoHandlingCopy } from "@/components/HowItWorks";
-import { Button, Spinner } from "@/components/ui";
+import { Button } from "@/components/ui";
 import { loadHevySession } from "@/hevy/session";
 import { subscribeSession } from "@/lib/sessionStore";
-import { PHYSIQUE_VIEWS, type PhysiqueAssessment, type PhysiqueView } from "@/physique/types";
+import { peekPendingPhotos, stashPendingPhotos } from "@/physique/pendingAnalysis";
+import { PHYSIQUE_VIEWS, type PhysiqueView } from "@/physique/types";
 import { useSessionReady } from "@/report/ReportContext";
 import { resetReportProgress, saveLagOverrides, savePhysique } from "@/report/state";
-import type { Finding, LagMap } from "@/scoring";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { ACCEPTED_LABEL, PhotoAngleUpload } from "./PhotoAngleUpload";
 import { SetupProgress, SetupShell } from "./SetupShell";
-
-type Phase = { kind: "idle" } | { kind: "analyzing" } | { kind: "error"; message: string; retryable: boolean };
 
 const serverNull = () => null;
 
@@ -21,19 +19,12 @@ export function PhotosScreen() {
   const router = useRouter();
   const ready = useSessionReady();
   const hevy = useSyncExternalStore(subscribeSession, loadHevySession, serverNull);
-  const [photos, setPhotos] = useState<Partial<Record<PhysiqueView, File>>>({});
-  const [phase, setPhase] = useState<Phase>({ kind: "idle" });
-  const errorRef = useRef<HTMLDivElement>(null);
+  const [photos, setPhotos] = useState<Partial<Record<PhysiqueView, File>>>(() => peekPendingPhotos() ?? {});
   const views = PHYSIQUE_VIEWS.filter((view) => photos[view]);
-  const analyzing = phase.kind === "analyzing";
 
   useEffect(() => {
     if (ready && !hevy) router.replace("/connect");
   }, [ready, hevy, router]);
-
-  useEffect(() => {
-    if (phase.kind === "error") errorRef.current?.focus();
-  }, [phase.kind]);
 
   function finish() {
     resetReportProgress();
@@ -46,43 +37,9 @@ export function PhotosScreen() {
     finish();
   }
 
-  async function analyze() {
-    setPhase({ kind: "analyzing" });
-    const form = new FormData();
-    for (const view of views) form.append(view, photos[view]!);
-    let response: Response;
-    try {
-      response = await fetch("/api/physique", { method: "POST", body: form });
-    } catch {
-      setPhase({ kind: "error", message: "Couldn't reach Hevygrade. Check your connection.", retryable: true });
-      return;
-    }
-    const payload = (await response.json().catch(() => ({}))) as {
-      error?: string;
-      assessment?: PhysiqueAssessment;
-      lagMap?: LagMap;
-      findings?: Finding[];
-    };
-    if (!response.ok) {
-      setPhase({
-        kind: "error",
-        message:
-          response.status === 501
-            ? "Photo analysis isn't set up on this server yet, so it can't read photos."
-            : (payload.error ?? "Photo analysis failed."),
-        retryable: response.status !== 501,
-      });
-      return;
-    }
-    savePhysique({
-      status: "graded",
-      lagMap: payload.lagMap ?? {},
-      findings: payload.findings ?? [],
-      assessment: payload.assessment,
-      views,
-    });
-    saveLagOverrides({});
-    finish();
+  function analyze() {
+    stashPendingPhotos(photos);
+    router.push("/preparing");
   }
 
   if (!ready || !hevy) {
@@ -126,7 +83,6 @@ export function PhotosScreen() {
                 key={view}
                 view={view}
                 file={photos[view]}
-                disabled={analyzing}
                 onFile={(file) => setPhotos((current) => ({ ...current, [view]: file }))}
                 onRemove={() =>
                   setPhotos((current) => {
@@ -154,44 +110,16 @@ export function PhotosScreen() {
             <PhotoHandlingCopy />
           </details>
 
-          {phase.kind === "error" ? (
-            <div
-              ref={errorRef}
-              tabIndex={-1}
-              role="alert"
-              className="mt-6 rounded-card border border-bad/40 bg-bad/10 p-4 text-[14px] leading-[22px]"
-            >
-              <p className="text-ink">{phase.message}</p>
-              <p className="mt-1 text-ink-2">
-                {phase.retryable ? "Try again, or continue with workout-only results." : "Continue with workout-only results."}
-              </p>
-            </div>
-          ) : null}
-
           <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center">
-            <Button onClick={analyze} disabled={analyzing || views.length === 0}>
-              {analyzing ? (
-                <>
-                  <Spinner /> Analyzing your photos…
-                </>
-              ) : phase.kind === "error" && phase.retryable ? (
-                "Try again"
-              ) : (
-                <>
-                  Continue with photos <span aria-hidden>→</span>
-                </>
-              )}
+            <Button onClick={analyze} disabled={views.length === 0}>
+              Continue with photos <span aria-hidden>→</span>
             </Button>
-            <Button variant="ghost" onClick={continueWithout} disabled={analyzing}>
+            <Button variant="ghost" onClick={continueWithout}>
               Continue without photos
             </Button>
           </div>
-          <p className="mt-3 text-[13px] leading-[20px] text-ink-3" aria-live="polite">
-            {analyzing
-              ? "Sending your photos for analysis. This can take a little while."
-              : views.length > 0
-                ? "Continuing sends these photos to Anthropic for analysis."
-                : ""}
+          <p className="mt-3 text-[13px] leading-[20px] text-ink-3">
+            {views.length > 0 ? "Continuing sends these photos to Anthropic for analysis." : ""}
           </p>
         </>
       )}

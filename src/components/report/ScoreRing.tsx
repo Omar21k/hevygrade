@@ -3,13 +3,13 @@
 import { scoreTone } from "@/report/view";
 import { useEffect, useState } from "react";
 
-const COUNT_MS = 450;
+const COUNT_MS = 1100;
 
 function prefersReducedMotion(): boolean {
   return typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-function useCountUp(target: number): number {
+function useCountUp(target: number, duration: number): number {
   const [reduced] = useState(prefersReducedMotion);
   const [progress, setProgress] = useState(reduced ? 1 : 0);
   useEffect(() => {
@@ -17,19 +17,19 @@ function useCountUp(target: number): number {
     let frame = 0;
     const start = performance.now();
     const tick = (now: number) => {
-      const next = Math.min(1, (now - start) / COUNT_MS);
+      const next = Math.min(1, (now - start) / duration);
       setProgress(next);
       if (next < 1) frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [reduced]);
+  }, [reduced, duration]);
   return target * (1 - Math.pow(1 - progress, 3));
 }
 
 /** Decorative ring; the score is also given as text for assistive tech. */
-export function ScoreRing({ score, size = 168 }: { score: number; size?: number }) {
-  const value = useCountUp(score);
+export function ScoreRing({ score, size = 168, duration = COUNT_MS }: { score: number; size?: number; duration?: number }) {
+  const value = useCountUp(score, duration);
   const radius = size / 2 - 8;
   const circumference = 2 * Math.PI * radius;
   const tone = scoreTone(score) === "good" ? "text-good" : "text-warn";
