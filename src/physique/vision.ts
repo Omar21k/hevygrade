@@ -3,7 +3,7 @@ import type { PhysiqueView } from "./types";
 import type { PhysiqueAssessment } from "./types";
 
 const ANTHROPIC_VERSION = "2026-10-21";
-const DEFAULT_MODEL = "claude-sonnet-4-5";
+const DEFAULT_MODEL = "claude-sonnet-5-5";
 
 type AnthropicMedia = "image/jpeg" | "image/png" | "image/webp" | "image/gif";
 
@@ -44,7 +44,6 @@ export async function assessPhysiqueFromImages(
     body: JSON.stringify({
       model,
       max_tokens: 2048,
-      temperature: 0.2,
       system: "You are a strict visual hypertrophy assessor. Return JSON only.",
       messages: [{ role: "user", content }],
     }),
