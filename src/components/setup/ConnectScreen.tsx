@@ -2,19 +2,11 @@
 
 import { HowItWorksContent, KeyHandlingCopy } from "@/components/HowItWorks";
 import { Button, Dialog, Spinner } from "@/components/ui";
-import { loadHevySession, saveHevySession, type HevyPayload } from "@/hevy/session";
-import { subscribeSession } from "@/lib/sessionStore";
-import { useSessionReady } from "@/report/ReportContext";
-import {
-  clearPhysique,
-  loadPhysique,
-  resetReportProgress,
-  saveLagOverrides,
-  savePhysique,
-} from "@/report/state";
+import { saveHevySession, type HevyPayload } from "@/hevy/session";
+import { clearPhysique, resetReportProgress, saveLagOverrides, savePhysique } from "@/report/state";
 import { fixtures } from "@/scoring";
 import { useRouter } from "next/navigation";
-import { useEffect, useId, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { SetupProgress, SetupShell } from "./SetupShell";
 
 type ImportFailure = {
@@ -28,8 +20,6 @@ type Phase =
   | { kind: "importing" }
   | { kind: "error"; message: string; field: boolean }
   | { kind: "connected"; workouts: number; routines: number };
-
-const serverNull = () => null;
 
 function failureMessage(status: number, body: ImportFailure): { message: string; field: boolean } {
   switch (body.code) {
@@ -65,25 +55,16 @@ function demoPayload(): HevyPayload {
   };
 }
 
-export function ConnectScreen({ redirectReturning = false }: { redirectReturning?: boolean }) {
+export function ConnectScreen() {
   const router = useRouter();
-  const ready = useSessionReady();
-  const existing = useSyncExternalStore(subscribeSession, loadHevySession, serverNull);
-  const existingPhysique = useSyncExternalStore(subscribeSession, loadPhysique, serverNull);
   const [apiKey, setApiKey] = useState("");
   const [reveal, setReveal] = useState(false);
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const [howOpen, setHowOpen] = useState(false);
   const continueRef = useRef<HTMLButtonElement>(null);
-  /** Set once the user acts here, so writing a new session doesn't trigger the returning-user redirect. */
-  const acted = useRef(false);
   const inputId = useId();
   const errorId = useId();
   const helpId = useId();
-
-  useEffect(() => {
-    if (redirectReturning && !acted.current && ready && existing && existingPhysique) router.replace("/report");
-  }, [redirectReturning, ready, existing, existingPhysique, router]);
 
   useEffect(() => {
     if (phase.kind === "connected") continueRef.current?.focus();
@@ -92,7 +73,6 @@ export function ConnectScreen({ redirectReturning = false }: { redirectReturning
   async function connect(event: FormEvent) {
     event.preventDefault();
     if (phase.kind === "importing") return;
-    acted.current = true;
     setPhase({ kind: "importing" });
     let response: Response;
     try {
@@ -127,7 +107,6 @@ export function ConnectScreen({ redirectReturning = false }: { redirectReturning
   }
 
   function openDemo() {
-    acted.current = true;
     saveHevySession(demoPayload());
     savePhysique({ status: "skipped", lagMap: {}, findings: [], views: [] });
     saveLagOverrides({ chest_upper: "lagging", lats: "lagging" });

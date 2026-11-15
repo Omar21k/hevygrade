@@ -1,5 +1,5 @@
-import { ConnectScreen } from "@/components/setup/ConnectScreen";
+import { HomeLanding } from "@/components/HomeLanding";
 
 export default function Home() {
-  return <ConnectScreen redirectReturning />;
+  return <HomeLanding />;
 }
