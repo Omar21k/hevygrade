@@ -7,12 +7,12 @@ import { assessPhysiqueFromImages } from "@/physique/vision";
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
   if (!apiKey) {
     return NextResponse.json(
       {
         error:
-          "Physique photo grading needs OPENAI_API_KEY in .env.local. You can still tag lagging regions manually.",
+          "Physique photo grading needs ANTHROPIC_API_KEY in .env.local. You can still tag lagging regions manually.",
       },
       { status: 501 },
     );
