@@ -11,6 +11,7 @@ import {
   REGION_META,
   regionVerb,
   snapshot,
+  targetsFor,
   tryGetExercise,
   type ExerciseSlot,
   type Grade,
@@ -24,8 +25,18 @@ import {
   type Split,
   type Suggestion,
   type SuggestionKind,
+  perWeekOf,
+  resumeSuggestions,
+  describeTrend,
+  exerciseTrend,
+  COVERAGE_WEIGHTS,
+  type CoverageParts,
+  type ExerciseTrend,
+  ACTIVE_ROUTINE_WEEKS,
 } from "@/scoring";
 import type { PhysiqueResult } from "./state";
+import { physiqueBalance, type PhysiqueBalance } from "@/physique/balance";
+import type { PhysiqueView, RegionDevelopment } from "@/physique/types";
 
 export const METRICS = ["coverage", "growth", "recovery"] as const;
 export type Metric = (typeof METRICS)[number];
@@ -99,8 +110,12 @@ export type PhotoContext =
   | { kind: "unclear" }
   | {
       kind: "seen";
-      /** "possibly-behind": read as behind, but not confidently enough to raise the target. */
-      relation: "behind" | "possibly-behind" | "in-line" | "ahead";
+      /**
+       * "behind": clearly behind. "weaker": trails this physique's own average,
+       * so it's prioritized as a weak point. "possibly-behind": read as behind,
+       * but not confidently enough to raise the target.
+       */
+      relation: "behind" | "weaker" | "possibly-behind" | "in-line" | "ahead";
       limited: boolean;
       note?: string;
     };
@@ -108,7 +123,8 @@ export type PhotoContext =
 /**
  * One judgment per muscle from photos (or your goal) and training together.
  * "both": looks behind and under target. "training-gap": under target, photos
- * don't flag it. "photo-gap": looks behind, but volume is already on target.
+ * don't flag it. "photo-gap": looks behind with logged volume already at the
+ * top of its priority range, so more sets would cost recovery.
  */
 export type Verdict = "both" | "training-gap" | "photo-gap" | "on-track" | "ahead";
 
@@ -177,7 +193,9 @@ function photoContext(region: RegionId, physique: PhysiqueResult | null): PhotoC
   const tag = physique.lagMap[region];
   const relation =
     tag === "lagging"
-      ? "behind"
+      ? physique.weakPoints?.includes(region)
+        ? "weaker"
+        : "behind"
       : tag === "overdeveloped"
         ? "ahead"
         : row.development <= 2.5
@@ -192,6 +210,7 @@ export function photoContextLabel(photo: PhotoContext): string {
   if (photo.kind === "unclear") return "Too unclear in your photos to judge";
   const relation = {
     behind: "Looks behind the rest of your physique",
+    weaker: "Trails the rest of your physique, so it's treated as a weak point",
     "possibly-behind": "Possibly behind, but too uncertain to raise its target",
     ahead: "Looks ahead of the rest of your physique",
     "in-line": "In line with the rest of your physique",
@@ -203,6 +222,7 @@ function assessRegion(
   row: RegionBreakdown,
   photo: PhotoContext,
   goalSource: GoalSource,
+  fromLogs: boolean,
 ): Pick<RegionView, "verdict" | "summary" | "assessment"> {
   const plural = regionVerb(row.region) === "are";
   const pick = (one: string, many: string) => (plural ? many : one);
@@ -224,26 +244,39 @@ function assessRegion(
   }
 
   const below = row.effectiveSets < row.targetLow;
+  const logged = fromLogs ? `${sets} in your logs` : `${sets} in your routines`;
 
   if (row.priority === "lagging") {
+    const weaker = photo.kind === "seen" && photo.relation === "weaker";
     const photoLead = mine
       ? `${name} ${pick("is", "are")} a priority you set`
-      : `${name} ${pick("looks", "look")} behind in your photos${limited}`;
-    if (below) {
+      : weaker
+        ? `${name} ${pick("trails", "trail")} the rest of your physique in your photos${limited}`
+        : `${name} ${pick("looks", "look")} behind in your photos${limited}`;
+    const photoTag = weaker ? "Weak point in photos" : "Behind in photos";
+    // What most people need for this muscle. Behind despite this much means it responds less than average.
+    const normalLow = targetsFor(row.region, "maintain").low;
+    // Lagging muscles get more volume until training reaches the top of the priority range.
+    if (row.effectiveSets < row.targetHigh) {
+      if (!mine && row.effectiveSets >= normalLow) {
+        return {
+          verdict: "both",
+          summary: `${photoTag} · needs more than average`,
+          assessment: `${photoLead}, even with ${logged}, a normal amount. Same work, smaller response: ${pick("it isn't", "they aren't")} one of your natural strengths, so ${pick("it needs", "they need")} more than average. The target goes up to ${range}.`,
+        };
+      }
       return {
         verdict: "both",
-        summary: mine ? "Your priority · under target" : "Behind in photos · under target",
+        summary: mine ? "Your priority · under target" : `${photoTag} · under target`,
         assessment: mine
-          ? `${photoLead} and ${pick("gets", "get")} only ${sets} against a ${range} target. Your goal and your training both point here.`
-          : `${photoLead} — that's the main gap. Your Hevy split only gives ${sets} (target ${range}), which may be why ${pick("it", "they")} haven't caught up.`,
+          ? `${photoLead} and ${pick("gets", "get")} ${logged} against a ${range} target. Your goal and your training both point here.`
+          : `${photoLead}. Your ${fromLogs ? "logged workouts give" : "routines give"} ${pick("it", "them")} ${sets} (target ${range}), which may be why ${pick("it hasn't", "they haven't")} caught up.`,
       };
     }
     return {
       verdict: "photo-gap",
-      summary: mine ? "Your priority · volume on target" : "Behind in photos · volume on target",
-      assessment: mine
-        ? `${photoLead}, and training already reaches ${pick("its", "their")} priority range (${sets}). Volume isn't the gap here.`
-        : `${photoLead}, but your routines already hit the raised target (${sets}). The photo lag is probably effort, selection, or progression — not more sets on paper.`,
+      summary: mine ? "Your priority · already high volume" : `${photoTag} · already high volume`,
+      assessment: `${photoLead}, with ${logged}, already at the top of ${pick("its", "their")} ${range} priority range. More sets past this start costing recovery, so keep this volume consistent and keep adding reps or load. ${pick("A muscle", "Muscles")} that ${pick("isn't", "aren't")} a natural strength just ${pick("takes", "take")} longer.`,
     };
   }
 
@@ -257,7 +290,7 @@ function assessRegion(
   else if (photo.kind === "unclear") photoRead = `${name} ${pick("is", "are")} too unclear in your photos to judge`;
 
   if (below) {
-    const trainingBit = `${pick("gets", "get")} only ${sets} against a ${range} target in your Hevy routines`;
+    const trainingBit = `${pick("gets", "get")} only ${logged} against a ${range} target`;
     const assessment = photoRead
       ? photo.kind === "seen" && photo.relation === "in-line" && !mine
         ? `${photoRead}. Training is still low (${sets} vs ${range}) — secondary to anything your photos flag, but worth topping up.`
@@ -290,15 +323,18 @@ function assessRegion(
   };
 }
 
+/** Weekly sets per exercise for a region, counting each day as often as it's done. */
 function contributionsFor(split: Split, region: RegionId): Contribution[] {
   const byName = new Map<string, Contribution>();
   for (const day of split.days) {
+    const perWeek = perWeekOf(day);
+    if (perWeek <= 0) continue;
     for (const item of day.exercises) {
       const def = tryGetExercise(item.exerciseId);
       if (!def) continue;
       const stim = def.stimulus.find((entry) => entry.region === region);
       if (!stim) continue;
-      const count = item.sets.filter((set) => set.type !== "warmup").length;
+      const count = item.sets.filter((set) => set.type !== "warmup").length * perWeek;
       if (count === 0) continue;
       const row = byName.get(def.name) ?? { name: def.name, days: [], directSets: 0, indirectSets: 0 };
       if (stim.role === "primary") row.directSets += count;
@@ -308,7 +344,7 @@ function contributionsFor(split: Split, region: RegionId): Contribution[] {
     }
   }
   return [...byName.values()]
-    .map((row) => ({ ...row, indirectSets: round1(row.indirectSets) }))
+    .map((row) => ({ ...row, directSets: round1(row.directSets), indirectSets: round1(row.indirectSets) }))
     .sort((a, b) => b.directSets + b.indirectSets - (a.directSets + a.indirectSets));
 }
 
@@ -328,7 +364,7 @@ export function buildRegionViews(input: {
         : "default";
     const photo = photoContext(row.region, physique);
     return {
-      ...assessRegion(row, photo, goalSource),
+      ...assessRegion(row, photo, goalSource, split.source === "logged"),
       drag: round1(
         priorityWeight(row.priority) *
           aestheticFeedbackWeight(row.region) *
@@ -418,9 +454,11 @@ export function focusRegions(regions: RegionView[], limit = 4): RegionView[] {
 export function orderRecommendations(recommendations: Recommendation[], regions: RegionView[]): Recommendation[] {
   const position = new Map(lackingRegions(regions).map((row, index) => [row.id, index]));
   const rankOf = (rec: Recommendation) => position.get(rec.region as RegionId) ?? regions.length;
+  // Changes to days you train come first; getting back to a skipped routine is an aside.
+  const asideOf = (rec: Recommendation) => (rec.kind === "resume" ? 1 : 0);
   return recommendations
     .map((rec, index) => ({ rec, index }))
-    .sort((a, b) => rankOf(a.rec) - rankOf(b.rec) || a.index - b.index)
+    .sort((a, b) => asideOf(a.rec) - asideOf(b.rec) || rankOf(a.rec) - rankOf(b.rec) || a.index - b.index)
     .map(({ rec }) => rec);
 }
 
@@ -434,7 +472,7 @@ export function explainRecommendation(rec: Recommendation, regions: RegionView[]
     case "add":
       return row.contributions.some((item) => item.directSets > 0)
         ? `${row.assessment} Another day of direct work adds weekly volume without making one session much longer.`
-        : `${row.assessment} Nothing in your split trains ${plural ? "them" : "it"} directly yet.`;
+        : `${row.assessment} Nothing you've logged lately trains ${plural ? "them" : "it"} directly.`;
     case "add_sets":
       return `${row.assessment} You already do ${first?.current?.name ?? "an exercise for this"}, so adding sets there is the simplest fix.`;
     case "swap":
@@ -454,11 +492,15 @@ export type ComparisonRow = {
   toDayTitle?: string;
   current?: ExerciseSlot;
   suggested?: ExerciseSlot;
+  /** A routine to get back to rather than an exercise change. */
+  resume?: Suggestion["resume"];
 };
+
+export type RecommendationKind = SuggestionKind;
 
 export type Recommendation = {
   id: string;
-  kind: SuggestionKind;
+  kind: RecommendationKind;
   region?: RegionId;
   headline: string;
   action: string;
@@ -469,7 +511,11 @@ export type Recommendation = {
   changes: PlannedChange[];
   /** Engine-estimated change if this recommendation alone were applied. */
   impact: ScoreDelta;
+  /** The numbers behind it: photos, logs, trend, what changes, and how to tell it worked. */
+  evidence: Evidence[];
 };
+
+export type Evidence = { label: "Photos" | "Your logs" | "Trend" | "After" | "Check"; text: string };
 
 function lowerLabel(region: RegionId | undefined): string {
   return region ? REGION_META[region].label.toLowerCase() : "this area";
@@ -481,25 +527,57 @@ function listDays(days: string[]): string {
   return `${unique.slice(0, -1).join(", ")} and ${unique[unique.length - 1]}`;
 }
 
-function headlineFor(kind: SuggestionKind, region: RegionId | undefined, grade: Grade): string {
-  const name = lowerLabel(region);
+/** "Lats: a second weekly exposure". Names the muscle and the move, never a generic category. */
+function headlineFor(steps: Suggestion[], grade: Grade): string {
+  const first = steps[0];
+  const region = first.region;
+  const name = region ? REGION_META[region].label : "Training";
   const row = grade.regions.find((item) => item.region === region);
-  switch (kind) {
+  switch (first.kind) {
     case "add":
-      return row?.hasPrimary ? `Spread ${name} work across more days` : `Give ${name} a dedicated slot`;
+      return row?.hasPrimary
+        ? `${name}: a ${steps.length > 1 ? "few more" : "second"} weekly exposure${steps.length > 1 ? "s" : ""}`
+        : `${name}: a direct exercise`;
     case "add_sets":
-      return `Add volume where you already train ${name}`;
+      return `${name}: more sets on ${first.current?.name ?? "what you already do"}`;
     case "swap":
-      return `Point an existing slot at ${name}`;
+      return `${name}: swap ${first.current?.name ?? "a slot"} for ${first.suggested?.name ?? "a direct movement"}`;
     case "cut_sets":
-      return `Trim ${name} volume`;
+      return `${name}: trim ${first.current?.name ?? "volume"}`;
     case "move":
-      return `Space out your ${name} sessions`;
+      return `${name}: stop training ${regionVerb(region ?? "lats") === "are" ? "them" : "it"} hard on back-to-back days`;
+    case "resume":
+      return `${name}: get back to ${first.dayTitle}`;
   }
 }
 
+/** Rep target for a slot: what you've logged lately, else a range that fits the movement. */
+function repsFor(exerciseId: string, history: HevyPayload["history"]): string {
+  const logged = exerciseTrend(history, exerciseId)?.reps;
+  if (logged) return logged;
+  const fatigue = tryGetExercise(exerciseId)?.fatigue;
+  return fatigue === "high" ? "6–10" : fatigue === "low" ? "10–15" : "8–12";
+}
+
+function withReps(slot: ExerciseSlot | undefined, exerciseId: string | undefined, history: HevyPayload["history"]) {
+  if (!slot || !exerciseId) return slot;
+  return { ...slot, reps: repsFor(exerciseId, history) };
+}
+
+function currentExerciseOf(change: PlannedChange): string | undefined {
+  if (change.op === "swap") return change.fromId;
+  if (change.op === "add" || change.op === "resume") return undefined;
+  return change.exerciseId;
+}
+
+function suggestedExerciseOf(change: PlannedChange): string | undefined {
+  if (change.op === "swap") return change.toId;
+  if (change.op === "resume") return undefined;
+  return change.exerciseId;
+}
+
 function actionFor(steps: Suggestion[]): string {
-  if (steps.length === 1) return steps[0].title;
+  if (steps.length === 1 || steps[0].kind === "resume") return steps.map((step) => step.title).join(". ");
   const first = steps[0];
   const sameExercise = steps.every((step) => step.suggested?.name === first.suggested?.name);
   const days = listDays(steps.map((step) => step.dayTitle));
@@ -526,6 +604,8 @@ function sessionImpactFor(steps: Suggestion[]): string {
       return `−1 set${each} on ${days}`;
     case "move":
       return "Same sets, different day";
+    case "resume":
+      return `+${steps.length} session${steps.length > 1 ? "s" : ""} a week`;
   }
 }
 
@@ -548,6 +628,8 @@ function tradeOffFor(steps: Suggestion[]): string {
       return `Slightly less ${lowerLabel(first.region)} stimulus, traded for recovery elsewhere.`;
     case "move":
       return `${first.current?.name ?? "The exercise"} moves to ${first.toDayTitle ?? "another day"}; check that it fits that session.`;
+    case "resume":
+      return `One more session a week. If that doesn't fit, adding sets on days you already train covers part of it.`;
   }
 }
 
@@ -559,10 +641,15 @@ function deltaBetween(before: ScoreSnapshot, after: ScoreSnapshot): ScoreDelta {
   };
 }
 
-export function projectChanges(
-  input: { split: Split; lagMap: LagMap; history?: HevyPayload["history"] },
-  changes: PlannedChange[],
-): ScoreSnapshot {
+/** Everything the engine grades from. `photoBalance` is the photo 60% of coverage. */
+export type ScoringInput = {
+  split: Split;
+  lagMap: LagMap;
+  history?: HevyPayload["history"];
+  photoBalance?: number;
+};
+
+export function projectChanges(input: ScoringInput, changes: PlannedChange[]): ScoreSnapshot {
   return snapshot(gradeSplit({ ...input, split: applyChanges(input.split, changes) }));
 }
 
@@ -574,11 +661,10 @@ export function projectChanges(
 export function buildRecommendations(input: {
   plan: Plan;
   grade: Grade;
-  split: Split;
-  lagMap: LagMap;
-  history?: HevyPayload["history"];
+  scoring: ScoringInput;
 }): Recommendation[] {
-  const { plan, grade, split, lagMap, history } = input;
+  const { plan, grade, scoring } = input;
+  const history = scoring.history ?? [];
   const groups = new Map<string, Suggestion[]>();
   for (const step of plan.steps) {
     const key = `${step.kind}:${step.region ?? "none"}`;
@@ -591,7 +677,7 @@ export function buildRecommendations(input: {
       id,
       kind: steps[0].kind,
       region: steps[0].region,
-      headline: headlineFor(steps[0].kind, steps[0].region, grade),
+      headline: headlineFor(steps, grade),
       action: actionFor(steps),
       sessionImpact: sessionImpactFor(steps),
       why: steps[0].reason,
@@ -599,11 +685,13 @@ export function buildRecommendations(input: {
       rows: steps.map((step) => ({
         dayTitle: step.dayTitle,
         toDayTitle: step.toDayTitle,
-        current: step.current,
-        suggested: step.suggested,
+        current: withReps(step.current, currentExerciseOf(step.change), history),
+        suggested: withReps(step.suggested, suggestedExerciseOf(step.change), history),
+        resume: step.resume,
       })),
       changes,
-      impact: deltaBetween(base, projectChanges({ split, lagMap, history }, changes)),
+      impact: deltaBetween(base, projectChanges(scoring, changes)),
+      evidence: [],
     };
   });
 }
@@ -626,6 +714,8 @@ export type MetricStory = {
   limitations: string[];
   /** Score is projected rather than observed (growth without logged workouts). */
   projected: boolean;
+  /** What the score is made of, when it blends inputs (coverage: photos 60%, training 40%). */
+  parts?: { label: string; score: number; weight: number; note: string }[];
 };
 
 function joinNames(names: string[]): string {
@@ -639,62 +729,107 @@ function capitalize(text: string): string {
 
 /** Photo muscles only when photos exist. Training volume is the cause, not a second lacking list. */
 function coverageTakeaway(regions: RegionView[], withPhotos: boolean): string {
-  const lacking = lackingRegions(regions).slice(0, 2);
+  const lacking = lackingRegions(regions).slice(0, 3);
   if (lacking.length === 0) {
     return withPhotos
-      ? "Your photos don't show a clear lag in the muscles that matter. Routine shortfalls elsewhere aren't treated as what you're lacking."
-      : "Your split gives each priority muscle work within its target range.";
+      ? "Your photos look even: no muscle that matters trails the rest of your physique enough to call out."
+      : "Your training gives each priority muscle work within its target range.";
   }
-  const many = lacking.length > 1 || regionVerb(lacking[0].id) === "are";
-  const pick = (one: string, other: string) => (many ? other : one);
   const names = joinNames(lacking.map((row) => row.name.toLowerCase()));
   const under = lacking.filter((row) => row.verdict === "both");
   const onVolume = lacking.filter((row) => row.verdict === "photo-gap");
   const sentences: string[] = [];
-  if (under.length > 0) {
-    const underNames = joinNames(under.map((row) => row.name.toLowerCase()));
-    const fromYou = under.every((row) => row.goalSource === "you");
+  const plural = (rows: RegionView[]) => rows.length > 1 || regionVerb(rows[0].id) === "are";
+  const namesOf = (rows: RegionView[]) => joinNames(rows.map((row) => row.name.toLowerCase()));
+  const yours = under.filter((row) => row.goalSource === "you");
+  const fromPhotos = under.filter((row) => row.goalSource !== "you");
+  // Under the normal amount: the routine is a likely cause. At or past it: they respond less than average.
+  const short = fromPhotos.filter((row) => row.effectiveSets < targetsFor(row.id, "maintain").low);
+  const normal = fromPhotos.filter((row) => row.effectiveSets >= targetsFor(row.id, "maintain").low);
+  if (yours.length > 0) {
+    const many = plural(yours);
     sentences.push(
-      fromYou
-        ? `${capitalize(underNames)} ${pick("is a priority", "are priorities")} you set, and ${pick("isn't", "aren't")} getting enough weekly work to match that.`
-        : `Your photos show ${underNames} behind the rest of your physique. Your routines look like a cause: ${pick("that muscle isn't", "those muscles aren't")} getting enough weekly work for something that looks behind.`,
+      `${capitalize(namesOf(yours))} ${many ? "are priorities" : "is a priority"} you set, and ${many ? "aren't" : "isn't"} getting enough weekly work to match that.`,
     );
   }
-  if (onVolume.length > 0 && sentences.length < 2) {
-    const volumeNames = joinNames(onVolume.map((row) => row.name.toLowerCase()));
+  if (short.length > 0) {
+    const many = plural(short);
     sentences.push(
-      `${capitalize(volumeNames)} ${onVolume.length > 1 || regionVerb(onVolume[0].id) === "are" ? "look" : "looks"} behind in your photos, but the routines already hit the raised target. More sets on paper probably isn't the fix.`,
+      `Your photos show ${namesOf(short)} behind the rest of your physique. Your training looks like a cause: ${many ? "they aren't" : "it isn't"} getting enough weekly work.`,
+    );
+  }
+  if (normal.length > 0) {
+    const many = plural(normal);
+    sentences.push(
+      short.length > 0
+        ? `${capitalize(namesOf(normal))} ${many ? "trail" : "trails"} too, even with a normal amount of work, so ${many ? "they aren't" : "it isn't"} one of your natural strengths and ${many ? "need" : "needs"} more than average.`
+        : `Your photos show ${namesOf(normal)} trailing the rest of your physique even with a normal amount of work, so ${many ? "they aren't" : "it isn't"} one of your natural strengths and ${many ? "need" : "needs"} more than average.`,
+    );
+  }
+  if (onVolume.length > 0) {
+    const volumeNames = namesOf(onVolume);
+    const many = plural(onVolume);
+    sentences.push(
+      `${capitalize(volumeNames)} still ${many ? "trail" : "trails"} in your photos with logged volume already at the top of ${many ? "their" : "its"} priority range. More sets would cost recovery there, so keep that work consistent and keep adding reps or load.`,
     );
   }
   if (sentences.length === 0) {
     sentences.push(`Your photos show ${names} behind. That's what this report treats as lacking.`);
   }
-  return sentences.slice(0, 2).join(" ");
+  return sentences.join(" ");
+}
+
+/** A main opportunity is a change to days you actually train, never a skipped routine. */
+function isRoutineChange(rec: Recommendation): boolean {
+  return rec.kind !== "resume";
 }
 
 function bestRecommendationFor(metric: Metric, recommendations: Recommendation[]): Recommendation | undefined {
   return [...recommendations]
-    .filter((rec) => rec.impact[metric] >= 0.1)
+    .filter((rec) => isRoutineChange(rec) && rec.impact[metric] >= 0.1)
     .sort((a, b) => b.impact[metric] - a.impact[metric])[0];
 }
 
 export function metricStories(input: {
   grade: Grade;
+  split: Split;
   regions: RegionView[];
   recommendations: Recommendation[];
   physique: PhysiqueResult | null;
   overrides: LagMap;
 }): Record<Metric, MetricStory> {
-  const { grade, regions, recommendations, physique, overrides } = input;
+  const { grade, split, regions, recommendations, physique, overrides } = input;
   const withPhotos = physique?.status === "graded";
+  const fromLogs = split.source === "logged";
+  const weeks = Math.round(split.weeks ?? 6);
+  const window = `${weeks === 1 ? "last week" : `last ${weeks} weeks`} of logged workouts`;
+  const source = fromLogs ? `Based on your ${window}` : "Based on your Hevy routines";
   const goalsSet = Object.keys(overrides).length > 0;
 
   // Coverage
   const focus = lackingRegions(regions);
   const coverageRec =
-    recommendations.find((rec) => rec.region && focus.some((row) => row.id === rec.region)) ??
-    recommendations.find((rec) => rec.impact.coverage >= 0.1);
+    recommendations.find((rec) => isRoutineChange(rec) && rec.region && focus.some((row) => row.id === rec.region)) ??
+    recommendations.find((rec) => isRoutineChange(rec) && rec.impact.coverage >= 0.1);
+  const coverageParts: CoverageParts = grade.coverage.parts;
   const coverage: MetricStory = {
+    parts:
+      coverageParts.photos === null
+        ? undefined
+        : [
+            {
+              label: "Photos",
+              score: coverageParts.photos,
+              weight: Math.round(COVERAGE_WEIGHTS.photos * 100),
+              note: "How even your physique looks. Moves when you upload new photos.",
+            },
+            {
+              label: "Training",
+              score: coverageParts.training,
+              weight: Math.round(COVERAGE_WEIGHTS.training * 100),
+              note: "Logged work aimed at what the photos flag. Your next moves raise this.",
+            },
+          ],
     takeaway: coverageTakeaway(regions, withPhotos),
     opportunity: coverageRec
       ? coverageRec.headline
@@ -702,15 +837,19 @@ export function metricStories(input: {
         ? `Bring ${focus[0].name.toLowerCase()} closer to ${regionVerb(focus[0].id) === "are" ? "their" : "its"} target range.`
         : undefined,
     evidence: [
-      "Based on your Hevy routines",
-      withPhotos ? "photo context" : null,
+      withPhotos ? "Your photos (60%)" : null,
+      withPhotos ? `${source.replace("Based on your", "your")} (40%)` : source,
       goalsSet ? "goals you set" : null,
     ]
       .filter(Boolean)
-      .join(" + "),
-    how: "With photos, what you're lacking is what the photos show as behind — lats, chest, shoulders, arms, and quads ahead of everything else. Glutes, calves, and forearms are left out unless you set that goal. Your Hevy sets explain a likely cause, such as not hitting that muscle enough. Those photo priorities get a higher target and count much more toward this score.",
+      .join(" + ")
+      .replace(/^your/, "Based on your")
+      .replace(/^Your photos/, "Based on your photos"),
+    how: "With photos, coverage is 60% how even your physique looks (each muscle against your own average, lats, chest, shoulders, arms and quads weighted most, plus extra weight on your single weakest one) and 40% whether your logged training gives the muscles that trail enough weekly work. The photo part only changes with new photos; the training part is what your next moves raise. What you're lacking is what the photos show as behind, plus up to three muscles that trail the rest of your own physique. Everyone responds differently, so a muscle that trails despite normal volume isn't one of your strengths and gets a higher target. Lats, chest, shoulders, arms, and quads count ahead of everything else. Glutes, calves, and forearms are left out unless you set that goal. Your logged sets explain a likely cause, such as not hitting that muscle enough. Those photo priorities get a higher target and count much more toward this score. A muscle that's behind gets more weekly sets first, up to the top of its range.",
     limitations: [
-      "Uses the sets saved in your routines, not what you logged in a given week.",
+      fromLogs
+        ? `Uses the sets you actually logged. A routine you've done in the last ${ACTIVE_ROUTINE_WEEKS} weeks counts at least once a week; one you haven't adds nothing. Your routines are only used to suggest fixes.`
+        : "No logged workouts yet, so this uses the sets saved in your routines as if you did each one weekly.",
       withPhotos
         ? "Photo context depends on pose and lighting and can be wrong. Goals you set override it."
         : "No photos, so every muscle uses a standard target unless you set a goal.",
@@ -751,8 +890,8 @@ export function metricStories(input: {
     evidence:
       parts.progression === null
         ? "Based on your Hevy routines only"
-        : `Based on your Hevy routines + your last ${PROGRESSION_WINDOW_DAYS / 7} weeks of logged workouts`,
-    how: "Combines weekly volume against each muscle's range, how often each muscle is trained, whether it has a direct exercise, and estimated-strength trends per exercise from your logged sets.",
+        : `Based on your ${window} + ${PROGRESSION_WINDOW_DAYS / 7} weeks of lift trends`,
+    how: "Combines logged weekly volume against each muscle's range, how many times a week you actually train each muscle, whether it gets a direct exercise, and estimated-strength trends per exercise from your logged sets.",
     limitations: [
       "Progression signals come from estimated strength in logged sets. They are not proof of muscle growth.",
       parts.progression === null
@@ -771,11 +910,13 @@ export function metricStories(input: {
         ? "Your schedule spaces out repeated heavy sessions and stays within recoverable weekly volume."
         : `${recoveryFindings[0].title}.`,
     opportunity: recoveryRec?.headline ?? recoveryFindings[0]?.suggestedChange,
-    evidence: "Based on your routine schedule and set counts",
+    evidence: fromLogs ? `Based on your ${window}` : "Based on your routine schedule and set counts",
     how: "Starts at 10 and subtracts for muscles past recoverable volume, very long sessions, a high weekly set total, and heavy work on the same muscle on back-to-back days.",
     limitations: [
       "An estimate from training structure, not a measure of fatigue, sleep, or readiness.",
-      "Back-to-back days are judged by your routine order in Hevy, not your calendar.",
+      fromLogs
+        ? "Back-to-back days come from the dates you logged, counted when they happen at least every other week."
+        : "Back-to-back days are judged by your routine order in Hevy, since there are no logged dates yet.",
     ],
     projected: false,
   };
@@ -795,24 +936,154 @@ export function buildReport(input: {
   overrides: LagMap;
 }) {
   const { hevy, split, lagMap, physique, overrides } = input;
-  const scoring = { split, lagMap, history: hevy.history };
+  const balance =
+    physique?.status === "graded" && physique.assessment ? physiqueBalance(physique.assessment) : null;
+  const scoring: ScoringInput = { split, lagMap, history: hevy.history, photoBalance: balance?.score };
+  // The photo part only moves with new photos, so plan on the training part alone.
+  const training: ScoringInput = { split, lagMap, history: hevy.history };
   const grade = gradeSplit(scoring);
   const baseline = gradeSplit({ ...scoring, lagMap: {} });
-  const plan = buildPlan(scoring);
-  const planned = buildRecommendations({ plan, grade, ...scoring });
+  const plan = buildPlan(training);
+  // Resume suggestions are scored on their own, not chained into the plan.
+  const planned = buildRecommendations({
+    plan: { ...plan, steps: [...plan.steps, ...resumeSuggestions(training)] },
+    grade,
+    scoring,
+  });
   const regions = buildRegionViews({ grade, split, physique, overrides, recommendations: planned });
   const lead = new Set(lackingRegions(regions).map((row) => row.id));
   const scoped =
     photosWereGraded(regions) && lead.size > 0
       ? planned.filter((rec) => !rec.region || lead.has(rec.region))
       : planned.filter((rec) => !rec.region || !LOW_AESTHETIC_PRIORITY_REGIONS.includes(rec.region));
-  const recommendations = orderRecommendations(scoped, regions).map((rec) => ({
-    ...rec,
-    why: explainRecommendation(rec, regions),
-  }));
-  const stories = metricStories({ grade, regions, recommendations, physique, overrides });
+  const ordered = orderRecommendations(
+    scoped.map((rec) => ({ ...rec, why: explainRecommendation(rec, regions) })),
+    regions,
+  );
+  // Three moves at most; a skipped routine is an aside after them.
+  const recommendations = [
+    ...ordered.filter((rec) => rec.kind !== "resume").slice(0, MAX_MOVES),
+    ...ordered.filter((rec) => rec.kind === "resume"),
+  ].map((rec) => ({ ...rec, evidence: evidenceFor(rec, { grade, regions, physique, balance, scoring }) }));
+  for (const row of regions) {
+    row.recommendationIds = recommendations.filter((rec) => rec.region === row.id).map((rec) => rec.id);
+  }
+  const stories = metricStories({ grade, split, regions, recommendations, physique, overrides });
   const details = reportDetails({ hevy, physique, regions });
-  return { grade, baseline, plan, recommendations, regions, stories, details };
+  return { grade, baseline, plan, recommendations, regions, stories, details, scoring, balance };
+}
+
+const MAX_MOVES = 3;
+
+function formatSets(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+/** The exercise a muscle's evidence is about: the one in the change, else the one doing most of its work. */
+function keyExerciseFor(rec: Recommendation, split: Split): string | undefined {
+  const fromChange = rec.changes.map(currentExerciseOf).find(Boolean);
+  if (fromChange) return fromChange;
+  if (!rec.region) return undefined;
+  let best: { id: string; sets: number } | undefined;
+  for (const day of split.days) {
+    if (perWeekOf(day) <= 0) continue;
+    for (const item of day.exercises) {
+      const def = tryGetExercise(item.exerciseId);
+      if (!def?.stimulus.some((stim) => stim.region === rec.region && stim.role === "primary")) continue;
+      const sets = item.sets.filter((set) => set.type !== "warmup").length * perWeekOf(day);
+      if (!best || sets > best.sets) best = { id: item.exerciseId, sets };
+    }
+  }
+  return best?.id;
+}
+
+/**
+ * The numbers behind a move, one line each: what the photos show, what you
+ * logged, how the main lift is moving, where the change lands you, and what
+ * to watch in Hevy to know it worked.
+ */
+function evidenceFor(
+  rec: Recommendation,
+  context: {
+    grade: Grade;
+    regions: RegionView[];
+    physique: PhysiqueResult | null;
+    balance: PhysiqueBalance | null;
+    scoring: ScoringInput;
+  },
+): Evidence[] {
+  const { grade, regions, physique, balance, scoring } = context;
+  const history = scoring.history ?? [];
+  const evidence: Evidence[] = [];
+  const region = rec.region;
+  const view = region ? regions.find((row) => row.id === region) : undefined;
+  const breakdown = region ? grade.regions.find((row) => row.region === region) : undefined;
+  const weeks = Math.round(scoring.split.weeks ?? 6);
+  const span = scoring.split.source === "logged" ? `Last ${weeks} weeks` : "Your routines";
+  const recovery = rec.kind === "cut_sets" || rec.kind === "move";
+
+  if (region && view) {
+    const development = balance?.developments[region];
+    const note = physique?.assessment?.developments.find((row) => row.region === region)?.note;
+    if (view.goalSource === "you") {
+      evidence.push({ label: "Photos", text: `You set ${view.name.toLowerCase()} as a priority yourself.` });
+    } else if (development !== undefined && balance) {
+      evidence.push({
+        label: "Photos",
+        text: `${view.name} read ${development.toFixed(1)} out of 5, against your physique's ${balance.average.toFixed(1)} average${note ? `. “${note}”` : "."}`,
+      });
+    }
+  }
+
+  if (view && breakdown) {
+    const direct = view.contributions.filter((item) => item.directSets > 0).slice(0, 2);
+    const sources =
+      direct.length > 0
+        ? direct.map((item) => `${item.name} ${formatSets(item.directSets)} sets/wk (${item.days.join(", ")})`).join(", ")
+        : "nothing that trains it directly";
+    evidence.push({
+      label: "Your logs",
+      text: recovery
+        ? `${span}: ${formatSets(view.effectiveSets)} effective sets a week, past the ${view.targetMin}–${view.targetMax} range; about ${breakdown.mrv} is what most people recover from. From ${sources}.`
+        : `${span}: ${formatSets(view.effectiveSets)} effective sets a week, ${formatSets(view.trainingDays)}× a week. From ${sources}.`,
+    });
+  }
+
+  const keyId = keyExerciseFor(rec, scoring.split);
+  const trend: ExerciseTrend | null = keyId ? exerciseTrend(history, keyId) : null;
+  const keyName = keyId ? tryGetExercise(keyId)?.name : undefined;
+  if (trend && keyName) evidence.push({ label: "Trend", text: describeTrend(keyName, trend) });
+
+  if (region && rec.changes.length > 0) {
+    const after = gradeSplit({ ...scoring, split: applyChanges(scoring.split, rec.changes) }).regions.find(
+      (row) => row.region === region,
+    );
+    if (after && breakdown) {
+      evidence.push({
+        label: "After",
+        text: `About ${formatSets(after.effectiveSets)} effective sets a week, ${formatSets(after.frequency)}× a week (target ${breakdown.targetLow}–${breakdown.targetHigh}).`,
+      });
+    }
+  }
+
+  const suggestedId = rec.changes.map(suggestedExerciseOf).find(Boolean);
+  const suggestedName = suggestedId ? tryGetExercise(suggestedId)?.name : undefined;
+  const suggestedTrend = suggestedId ? exerciseTrend(history, suggestedId) : null;
+  let check: string | undefined;
+  if (rec.kind === "resume") {
+    check = `Log ${rec.rows[0]?.dayTitle ?? "it"} at least once a week for the next 4 weeks.`;
+  } else if (recovery) {
+    check =
+      trend && keyName
+        ? `${keyName} holds ${trend.bestSet} or better over the next 3 weeks with fewer sets.`
+        : `Your ${(view?.name ?? "").toLowerCase()} lifts hold or go up over the next 3 weeks with fewer sets.`;
+  } else if (suggestedTrend && suggestedName) {
+    check = `Beat ${suggestedTrend.bestSet} on ${suggestedName} within 3 weeks.`;
+  } else if (suggestedName) {
+    check = `Log ${suggestedName} for 3 weeks and add a rep or a little load each week.`;
+  }
+  if (check) evidence.push({ label: "Check", text: check });
+  return evidence;
 }
 
 // ---------------------------------------------------------------------------
@@ -842,18 +1113,36 @@ const PHOTO_PRAISE: Partial<Record<RegionId, string>> = {
   hamstrings: "Hamstrings look developed from the side.",
 };
 
-/**
- * What already looks good in the photos, before the scores. Training volume
- * does not count as a compliment here.
- */
-export function strengthLines(physique: PhysiqueResult | null): string[] {
-  if (!physique || physique.status !== "graded") {
-    return ["No photos this time, so this stays quiet. The scores come from your routines."];
+export type StrengthCard = {
+  title: string;
+  /** What in the photo shows it. Empty for older reads that only have a score. */
+  detail: string;
+  /** e.g. "Side delts · Front photo". */
+  tag: string | null;
+};
+
+export type StrengthReveal =
+  | { kind: "cards"; cards: StrengthCard[] }
+  | { kind: "message"; message: string };
+
+const VIEW_LABEL: Record<PhysiqueView, string> = {
+  front: "Front photo",
+  side: "Side photo",
+  back: "Back photo",
+};
+
+function strengthTag(regions: RegionId[], view: PhysiqueView | undefined): string | null {
+  const parts: string[] = [];
+  if (regions.length > 0) {
+    parts.push(joinNames([...new Set(regions.slice(0, 2).map((region) => REGION_META[region].label))]));
   }
-  if (!physique.assessment) {
-    return ["Your photos were uploaded, but the read didn't save. Run them again from the photos step."];
-  }
-  const rows = physique.assessment.developments.filter(
+  if (view) parts.push(VIEW_LABEL[view]);
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+/** Older saved reads have no written strengths, so fall back to region praise. */
+function strengthsFromScores(physique: PhysiqueResult, developments: RegionDevelopment[]): StrengthCard[] {
+  const rows = developments.filter(
     (row) => row.confidence >= 0.55 && Number.isFinite(row.development) && PHOTO_PRAISE[row.region],
   );
   const baseline =
@@ -867,19 +1156,63 @@ export function strengthLines(physique: PhysiqueResult | null): string[] {
     )
     .sort((a, b) => b.development - a.development);
 
-  const lines: string[] = [];
+  const cards: StrengthCard[] = [];
   const used = new Set<string>();
   for (const row of strong) {
-    const line = PHOTO_PRAISE[row.region];
-    if (!line || used.has(line)) continue;
-    used.add(line);
-    lines.push(line);
-    if (lines.length === 2) break;
+    const title = PHOTO_PRAISE[row.region];
+    if (!title || used.has(title)) continue;
+    used.add(title);
+    cards.push({ title, detail: row.note?.trim() ?? "", tag: strengthTag([row.region], undefined) });
   }
-  if (lines.length === 0) {
-    return ["Nothing in the photos stands out ahead of the rest. The scores get into where the work goes."];
+  return cards;
+}
+
+/**
+ * What already looks good in the photos, shown before the scores. Every real
+ * strength the read found, never one the photos flag as behind. Training
+ * volume does not count as a compliment here.
+ */
+export function strengthReveal(physique: PhysiqueResult | null): StrengthReveal {
+  if (!physique || physique.status !== "graded") {
+    return { kind: "message", message: "No photos this time, so this stays quiet. The scores come from your training." };
   }
-  return lines;
+  const assessment = physique.assessment;
+  if (!assessment) {
+    return {
+      kind: "message",
+      message: "Your photos were uploaded, but the read didn't save. Run them again from the photos step.",
+    };
+  }
+
+  let cards: StrengthCard[];
+  if (assessment.strengths) {
+    const graded = new Map(
+      assessment.developments
+        .filter((row) => row.confidence >= 0.45 && Number.isFinite(row.development))
+        .map((row) => [row.region, row.development]),
+    );
+    cards = assessment.strengths
+      .filter((strength) =>
+        strength.regions.every(
+          (region) => physique.lagMap[region] !== "lagging" && (graded.get(region) ?? 3) >= 3,
+        ),
+      )
+      .map((strength) => ({
+        title: strength.title,
+        detail: strength.detail,
+        tag: strengthTag(strength.regions, strength.view),
+      }));
+  } else {
+    cards = strengthsFromScores(physique, assessment.developments);
+  }
+
+  if (cards.length === 0) {
+    return {
+      kind: "message",
+      message: "Nothing in the photos stands out ahead of the rest yet. The scores get into where the work goes.",
+    };
+  }
+  return { kind: "cards", cards };
 }
 
 export function overviewSubline(regions: RegionView[]): string {
@@ -887,11 +1220,11 @@ export function overviewSubline(regions: RegionView[]): string {
   if (focus.length === 0) {
     return photosWereGraded(regions)
       ? "Your photos don't show a clear lag in the muscles that matter."
-      : "Your split is within target across the board. Keep logging to track progression.";
+      : "Your training is within target across the board. Keep logging to track progression.";
   }
   const names = joinNames(focus.map((row) => row.name.toLowerCase()));
   if (focus.every((row) => row.goalSource === "photos")) {
-    return `Your photos say what's lacking: ${names}. Your routines are the context for why.`;
+    return `Your photos say what's lacking: ${names}. Your logged training is the context for why.`;
   }
   if (focus.every((row) => row.verdict === "both")) {
     const source = focus.every((row) => row.goalSource === "you")

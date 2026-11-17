@@ -1,14 +1,27 @@
 import { readSessionJson, removeSessionKeys, writeSessionJson } from "@/lib/sessionStore";
 import type { PhysiqueAssessment, PhysiqueView } from "@/physique/types";
-import type { Finding, LagMap } from "@/scoring";
+import { lagMapFromPhysique } from "@/physique/lagMap";
+import type { Finding, LagMap, RegionId } from "@/scoring";
 
 export type PhysiqueResult = {
   status: "graded" | "skipped";
   lagMap: LagMap;
   findings: Finding[];
   assessment?: PhysiqueAssessment;
+  /** Regions lagging only because they trail this physique's own average. */
+  weakPoints?: RegionId[];
   views: PhysiqueView[];
 };
+
+/**
+ * Re-derives the lag map from the saved assessment, so reads saved under older
+ * rules pick up the current ones without uploading photos again.
+ */
+export function withCurrentLagRules(physique: PhysiqueResult | null): PhysiqueResult | null {
+  if (!physique || physique.status !== "graded" || !physique.assessment) return physique;
+  const { lagMap, findings, weakPoints } = lagMapFromPhysique(physique.assessment);
+  return { ...physique, lagMap, findings, weakPoints };
+}
 
 export type PlanChoices = {
   selected: string[];

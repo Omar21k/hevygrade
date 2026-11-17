@@ -121,15 +121,6 @@ dialog::backdrop {
   }
 }
 
-@keyframes hg-scan {
-  from {
-    transform: translateX(-130%);
-  }
-  to {
-    transform: translateX(340%);
-  }
-}
-
 @keyframes hg-swap {
   from {
     opacity: 0;
@@ -149,10 +140,6 @@ dialog::backdrop {
   animation: hg-spin 0.9s linear infinite;
 }
 
-.hg-scan {
-  animation: hg-scan 1.15s ease-in-out infinite;
-}
-
 .hg-swap {
   animation: hg-swap 0.45s ease;
 }
@@ -164,12 +151,163 @@ dialog::backdrop {
   .hg-spin {
     animation-duration: 2.4s;
   }
-  .hg-scan {
-    animation: none;
-    transform: none;
-    width: 100%;
-  }
   .hg-swap {
+    animation: none;
+  }
+}
+
+/* Strengths reveal: a card lands, glows, and the current pip pulses. */
+@keyframes hg-pop {
+  0% {
+    opacity: 0;
+    transform: translateY(14px) scale(0.94);
+    filter: blur(6px);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(0) scale(1.02);
+    filter: blur(0);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes hg-glow {
+  0% {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  45% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.45;
+    transform: scale(1);
+  }
+}
+
+@keyframes hg-pip {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.5);
+  }
+}
+
+.hg-pop {
+  animation: hg-pop 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.hg-glow {
+  animation: hg-glow 1.4s ease-out both;
+}
+
+.hg-pip {
+  animation: hg-pip 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hg-pop,
+  .hg-glow,
+  .hg-pip {
+    animation: none;
+  }
+}
+
+/* Score suspense: the thinker ponders before each score. */
+@keyframes hg-ponder {
+  0%,
+  100% {
+    transform: rotate(-3deg);
+  }
+  50% {
+    transform: rotate(3deg);
+  }
+}
+
+@keyframes hg-brow {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+  }
+  75% {
+    transform: translateY(-3px);
+  }
+}
+
+@keyframes hg-think-dot {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+
+@keyframes hg-glint {
+  0%,
+  55%,
+  100% {
+    opacity: 0;
+  }
+  70% {
+    opacity: 0.9;
+  }
+}
+
+@keyframes hg-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+.hg-ponder,
+.hg-brow,
+.hg-think-dot,
+.hg-float {
+  transform-box: fill-box;
+}
+
+.hg-ponder {
+  transform-origin: 50% 100%;
+  animation: hg-ponder 2.4s ease-in-out infinite;
+}
+
+.hg-brow {
+  animation: hg-brow 2.4s ease-in-out infinite;
+}
+
+.hg-think-dot {
+  transform-origin: center;
+  animation: hg-think-dot 1.2s ease-in-out infinite;
+}
+
+.hg-glint {
+  animation: hg-glint 2.6s ease-in-out infinite;
+}
+
+.hg-float {
+  animation: hg-float 3s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hg-ponder,
+  .hg-brow,
+  .hg-think-dot,
+  .hg-glint,
+  .hg-float {
     animation: none;
   }
 }

@@ -12,9 +12,22 @@ export type RegionDevelopment = {
   note?: string;
 };
 
+/** Something that already looks good in the photos, written by the vision model. */
+export type PhysiqueStrength = {
+  /** Short, second person, e.g. "Those side delts are capped." */
+  title: string;
+  /** What in the photo shows it. */
+  detail: string;
+  /** Empty for whole-physique strengths like taper or symmetry. */
+  regions: RegionId[];
+  view?: PhysiqueView;
+};
+
 export type PhysiqueAssessment = {
   viewsPresent: PhysiqueView[];
   developments: RegionDevelopment[];
+  /** Missing on reads saved before strengths were added. */
+  strengths?: PhysiqueStrength[];
   blindSpots: string[];
   notes: string[];
 };

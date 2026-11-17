@@ -4,7 +4,9 @@ import type { PhysiqueAssessment } from "@/physique/types";
 import { fixtures, REGION_IDS, type LagMap, type RegionId } from "@/scoring";
 import { describe, expect, it } from "vitest";
 import type { PhysiqueResult } from "./state";
-import { buildReport, focusRegions, needsAttention, strengthLines } from "./view";
+import { targetsFor } from "@/scoring/regions";
+import { getExercise } from "@/scoring/catalog";
+import { buildReport, focusRegions, needsAttention, strengthReveal } from "./view";
 
 const split = fixtures.laggingUpperChest;
 const hevy: HevyPayload = {
@@ -45,21 +47,56 @@ describe("combined photo + training read", () => {
 
   it("judges each muscle on both signals", () => {
     expect(byId("lats").verdict).toBe("both");
-    expect(byId("lats").assessment).toMatch(/behind in your photos.*Hevy/i);
+    // Lats already get a normal amount of work in this split, so the gap is response, not effort.
+    expect(byId("lats").summary).toBe("Behind in photos · needs more than average");
+    expect(byId("lats").assessment).toMatch(/behind in your photos.*normal amount.*natural strengths/i);
     const trainingOnly = regions.filter((row) => row.verdict === "training-gap");
     expect(trainingOnly.length).toBeGreaterThan(0);
     for (const row of trainingOnly) expect(row.assessment).toMatch(/photos|Hevy|routines/i);
   });
 
-  it("praises muscles the photos score as strong, and skips ones they score as behind", () => {
+  it("falls back to region praise for older reads, skipping muscles the photos score as behind", () => {
     const withDelts = photosFlagging(["lats"]);
     withDelts.assessment!.developments = withDelts.assessment!.developments.map((row) =>
       row.region === "delt_side" ? { ...row, development: 4.6 } : row,
     );
-    const text = strengthLines(withDelts).join(" ");
+    const reveal = strengthReveal(withDelts);
+    expect(reveal.kind).toBe("cards");
+    const text = reveal.kind === "cards" ? reveal.cards.map((card) => card.title).join(" ") : "";
     expect(text).toBe("Delts look full and strong.");
     expect(text.toLowerCase()).not.toContain("lats");
     expect(text.toLowerCase()).not.toMatch(/sets|week|routine/);
+  });
+
+  it("shows every written strength except ones about a lagging or low-graded muscle", () => {
+    const graded = photosFlagging(["lats"]);
+    graded.assessment!.developments = graded.assessment!.developments.map((row) =>
+      row.region === "biceps" ? { ...row, development: 2.6 } : row,
+    );
+    graded.assessment!.strengths = [
+      { title: "Your side delts are carrying this photo.", detail: "Wide caps in the front shot.", regions: ["delt_side"], view: "front" },
+      { title: "That taper is real.", detail: "Shoulders to waist from the back.", regions: [], view: "back" },
+      { title: "Lats for days.", detail: "Wide from the back.", regions: ["lats"], view: "back" },
+      { title: "Biceps peak.", detail: "From the front.", regions: ["biceps"], view: "front" },
+      { title: "Quads have sweep.", detail: "Outer quad from the front.", regions: ["quads"] },
+    ];
+    const reveal = strengthReveal(graded);
+    expect(reveal.kind).toBe("cards");
+    if (reveal.kind !== "cards") return;
+    expect(reveal.cards.map((card) => card.title)).toEqual([
+      "Your side delts are carrying this photo.",
+      "That taper is real.",
+      "Quads have sweep.",
+    ]);
+    expect(reveal.cards[0].tag).toBe("Side delts · Front photo");
+    expect(reveal.cards[1].tag).toBe("Back photo");
+  });
+
+  it("says so when the read found no strengths, and when there were no photos", () => {
+    const none = photosFlagging([]);
+    none.assessment!.strengths = [];
+    expect(strengthReveal(none)).toMatchObject({ kind: "message", message: expect.stringMatching(/Nothing/) });
+    expect(strengthReveal(null)).toMatchObject({ kind: "message", message: expect.stringMatching(/No photos/) });
   });
 
   it("says what's lacking is the photo muscle, and does not mention glutes or training-only gaps", () => {
@@ -94,5 +131,66 @@ describe("combined photo + training read", () => {
     const traps = report(physique, { traps: "maintain" }).regions.find((row) => row.id === "traps")!;
     expect(traps.goalSource).toBe("you");
     expect(traps.assessment).toMatch(/You set traps to maintain/);
+  });
+});
+
+describe("muscles that look behind despite the volume", () => {
+  // A muscle this split already trains past the normal target.
+  const trainedHard = report(null).regions.find(
+    (row) =>
+      !["glutes", "calves", "forearms", "traps", "erectors", "abs"].includes(row.id) &&
+      row.effectiveSets >= targetsFor(row.id, "maintain").low &&
+      row.effectiveSets < targetsFor(row.id, "lagging").high,
+  );
+
+  it("has a well-trained muscle in the fixture to test with", () => {
+    expect(trainedHard).toBeDefined();
+  });
+
+  it("gets more volume first, never a 'train harder' card", () => {
+    const { regions, recommendations, stories } = report(photosFlagging([trainedHard!.id]));
+    const row = regions.find((item) => item.id === trainedHard!.id)!;
+    expect(row.verdict).toBe("both");
+    expect(row.summary).toMatch(/needs more than average/);
+    expect(row.assessment).toMatch(/natural strengths?/);
+    expect(focusRegions(regions, 10).map((item) => item.id)).toContain(trainedHard!.id);
+    expect(recommendations.some((rec) => /harder/.test(rec.headline))).toBe(false);
+    expect(stories.coverage.takeaway).not.toMatch(/harder sets/);
+  });
+
+  it("at the top of its priority range, keeps volume steady and pushes progression", () => {
+    const region = trainedHard!.id;
+    const high = targetsFor(region, "lagging").high;
+    const trains = (exerciseId: string) =>
+      getExercise(exerciseId).stimulus.some((stim) => stim.region === region && stim.role === "primary");
+    // Pile sets onto an exercise that trains it directly until it's past the top of the range.
+    const heavy = structuredClone(split);
+    const day = heavy.days.find((item) => item.exercises.some((exercise) => trains(exercise.exerciseId)))!;
+    const exercise = day.exercises.find((item) => trains(item.exerciseId))!;
+    exercise.sets.push(...Array.from({ length: high }, () => ({ type: "normal" as const })));
+    const physique = photosFlagging([region]);
+    const { regions, stories } = buildReport({ hevy, split: heavy, lagMap: physique.lagMap, physique, overrides: {} });
+    const row = regions.find((item) => item.id === region)!;
+    expect(row.verdict).toBe("photo-gap");
+    expect(row.summary).toMatch(/already high volume/);
+    expect(row.assessment).toMatch(/reps or load/);
+    expect(stories.coverage.takeaway).toMatch(/reps or load/);
+  });
+});
+
+describe("next moves", () => {
+  it("name the muscle, carry reps, and show the numbers behind them", () => {
+    const { recommendations } = report(photosFlagging(["chest_upper", "lats"]));
+    const moves = recommendations.filter((rec) => rec.kind !== "resume");
+    expect(moves.length).toBeGreaterThan(0);
+    expect(moves.length).toBeLessThanOrEqual(3);
+    for (const rec of moves) {
+      expect(rec.headline).toMatch(/^[A-Z][^:]+: /);
+      const labels = rec.evidence.map((item) => item.label);
+      expect(labels).toContain("Photos");
+      expect(labels).toContain("Your logs");
+      expect(labels).toContain("Check");
+      for (const row of rec.rows) if (row.suggested) expect(row.suggested.reps).toMatch(/^\d+(–\d+)?$/);
+    }
   });
 });

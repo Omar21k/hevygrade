@@ -1,4 +1,5 @@
 export {
+  COVERAGE_WEIGHTS,
   gradeSplit,
   OVERALL_FLOOR_MARGIN,
   OVERALL_WEIGHTS,
@@ -22,7 +23,7 @@ export {
   regionVerb,
   targetsFor,
 } from "./regions";
-export { applyChanges, buildPlan, balanceScore, snapshot } from "./suggest";
+export { applyChanges, buildPlan, balanceScore, resumeSuggestions, snapshot } from "./suggest";
 export type {
   ExerciseSlot,
   Plan,
@@ -32,8 +33,11 @@ export type {
   SuggestionKind,
 } from "./suggest";
 export { fixtures } from "./fixtures";
+export { describeTrend, exerciseTrend, formatDay, type ExerciseTrend } from "./trends";
+export { ACTIVE_ROUTINE_WEEKS, isSkipped, LOGGED_WINDOW_WEEKS, loggedSplit, perWeekOf } from "./logged";
 export { tryGetExercise } from "./catalog";
 export type {
+  CoverageParts,
   Grade,
   GrowthParts,
   ScoreInput,
@@ -41,6 +45,7 @@ export type {
   LagMap,
   Finding,
   HistorySet,
+  LoggedSession,
   RegionBreakdown,
 } from "./types";
 export type { ExerciseDef } from "./types";

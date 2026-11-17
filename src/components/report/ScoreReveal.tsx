@@ -7,85 +7,62 @@ import {
   METRIC_LABEL,
   METRIC_PROMPT,
   METRICS,
+  overviewHeadline,
   scoreStatus,
   scoreTone,
-  strengthLines,
+  strengthReveal,
   type Metric,
   type MetricStory,
 } from "@/report/view";
-import type { Grade } from "@/scoring";
+import { OVERALL_FLOOR_MARGIN, OVERALL_WEIGHTS, type Grade } from "@/scoring";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { ScoreRing } from "./ScoreRing";
+import { StrengthsReveal } from "./StrengthsReveal";
+import { Thinker } from "./Thinker";
 
-const READ_MS = 1200;
+/** Time the thinker ponders before a score shows. */
+const READ_MS = 2800;
 const COUNT_MS = 1100;
-const CHAR_MS = 26;
+/** The overall gets a longer build-up and a slower count. */
+const OVERALL_READ_MS = 3600;
+const OVERALL_COUNT_MS = 1700;
+
+const STEPS = [...METRICS, "overall"] as const;
+type Step = (typeof STEPS)[number];
+const STEP_LABEL: Record<Step, string> = { ...METRIC_LABEL, overall: "Overall" };
 
 function prefersReducedMotion(): boolean {
   return typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-function isMetric(value: string | null): value is Metric {
-  return value !== null && (METRICS as readonly string[]).includes(value);
+function isStep(value: string | null): value is Step {
+  return value !== null && (STEPS as readonly string[]).includes(value);
 }
 
-/** Types lines one after another. The full text is in the DOM for screen readers. */
-function TypedLines({ lines, onDone }: { lines: string[]; onDone: () => void }) {
+/** What the thinker is "checking" before each score. */
+const THINKING: Record<Step, string[]> = {
+  coverage: ["Counting the sets you actually logged…", "Checking each muscle against its target…"],
+  growth: ["Seeing how often you hit each muscle…", "Checking whether your lifts are moving…"],
+  recovery: ["Looking for back-to-back heavy days…", "Making sure it's all recoverable…"],
+  overall: ["Weighing all three…", "Okay. Got it."],
+};
+
+/** Reading → counting → done on a timer; reduced motion goes straight to done. */
+function usePhases(readMs: number, countMs: number) {
   const [reduced] = useState(prefersReducedMotion);
-  const [lineIndex, setLineIndex] = useState(reduced ? lines.length : 0);
-  const [chars, setChars] = useState(0);
+  const [phase, setPhase] = useState<"reading" | "counting" | "done">(reduced ? "done" : "reading");
   useEffect(() => {
-    if (reduced || lineIndex >= lines.length) onDone();
-  }, [reduced, lineIndex, lines.length, onDone]);
-
-  useEffect(() => {
-    if (reduced || lineIndex >= lines.length) return;
-    const line = lines[lineIndex];
-    const wait = chars < line.length ? CHAR_MS : 480;
-    const timer = window.setTimeout(() => {
-      if (chars < line.length) setChars((current) => current + 1);
-      else {
-        setLineIndex((current) => current + 1);
-        setChars(0);
-      }
-    }, wait);
-    return () => window.clearTimeout(timer);
-  }, [chars, lineIndex, lines, reduced]);
-
-  const done = reduced || lineIndex >= lines.length;
-  const visible = reduced
-    ? lines
-    : [...lines.slice(0, lineIndex), ...(lineIndex < lines.length ? [lines[lineIndex].slice(0, chars)] : [])];
-
-  return (
-    <div>
-      <div className="sr-only">{lines.join(" ")}</div>
-      <div aria-hidden className="flex flex-col gap-4">
-        {visible.map((line, index) => (
-          <p key={lines[index]} className="text-[22px] font-medium leading-[32px] text-ink md:text-[26px] md:leading-[36px]">
-            {line}
-            {!done && index === visible.length - 1 ? (
-              <span className="ml-0.5 inline-block h-[0.9em] w-[3px] translate-y-[0.08em] bg-accent motion-safe:animate-pulse" />
-            ) : null}
-          </p>
-        ))}
-      </div>
-      {done ? <span className="sr-only">Strengths finished.</span> : null}
-    </div>
-  );
-}
-
-function Reading({ label }: { label: string }) {
-  return (
-    <div className="flex h-[168px] flex-col items-center justify-center gap-5">
-      <p className="text-[17px] text-ink-2">Reading {label.toLowerCase()}…</p>
-      <div className="relative h-1 w-56 overflow-hidden rounded-full bg-line">
-        <div className="hg-scan absolute inset-y-0 w-1/3 rounded-full bg-accent" />
-      </div>
-    </div>
-  );
+    if (reduced) return;
+    const toCount = window.setTimeout(() => setPhase("counting"), readMs);
+    const toDone = window.setTimeout(() => setPhase("done"), readMs + countMs);
+    return () => {
+      window.clearTimeout(toCount);
+      window.clearTimeout(toDone);
+    };
+  }, [reduced, readMs, countMs]);
+  return phase;
 }
 
 function MetricStage({
@@ -99,18 +76,7 @@ function MetricStage({
   story: MetricStory;
   headingRef: RefObject<HTMLHeadingElement | null>;
 }) {
-  const [reduced] = useState(prefersReducedMotion);
-  const [phase, setPhase] = useState<"reading" | "counting" | "done">(reduced ? "done" : "reading");
-
-  useEffect(() => {
-    if (reduced) return;
-    const toCount = window.setTimeout(() => setPhase("counting"), READ_MS);
-    const toDone = window.setTimeout(() => setPhase("done"), READ_MS + COUNT_MS);
-    return () => {
-      window.clearTimeout(toCount);
-      window.clearTimeout(toDone);
-    };
-  }, [reduced]);
+  const phase = usePhases(READ_MS, COUNT_MS);
 
   return (
     <section className="mt-10 flex flex-col items-center text-center">
@@ -119,7 +85,13 @@ function MetricStage({
         {METRIC_PROMPT[metric]}
       </h1>
       <div className="mt-8">
-        {phase === "reading" ? <Reading label={METRIC_LABEL[metric]} /> : <ScoreRing score={score} duration={COUNT_MS} />}
+        {phase === "reading" ? (
+          <Thinker lines={THINKING[metric]} duration={READ_MS} />
+        ) : (
+          <div className="hg-pop">
+            <ScoreRing score={score} duration={COUNT_MS} />
+          </div>
+        )}
       </div>
       {phase === "done" ? (
         <div className="hg-rise flex w-full flex-col items-center">
@@ -129,6 +101,7 @@ function MetricStage({
               <span className="rounded-full bg-raised px-2.5 py-0.5 text-[12px] leading-[18px] text-ink-2">Projected</span>
             ) : null}
           </div>
+          {story.parts ? <ScoreParts parts={story.parts} /> : null}
           <p className="mt-6 max-w-[520px] text-[17px] leading-[28px] text-ink">{story.takeaway}</p>
           {story.opportunity ? (
             <div className="mt-6 w-full rounded-card bg-surface px-5 py-4 text-left">
@@ -160,18 +133,46 @@ function MetricStage({
   );
 }
 
+/** The pieces a blended score is made of, e.g. coverage: photos 60%, training 40%. */
+function ScoreParts({ parts }: { parts: NonNullable<MetricStory["parts"]> }) {
+  return (
+    <ul className="mt-6 grid w-full max-w-[520px] grid-cols-1 gap-2 text-left sm:grid-cols-2">
+      {parts.map((part) => (
+        <li key={part.label} className="rounded-card bg-surface px-4 py-3">
+          <div className="flex items-baseline justify-between gap-3">
+            <span className="text-[14px] font-medium text-ink">
+              {part.label} <span className="font-normal text-ink-3">· {part.weight}%</span>
+            </span>
+            <span
+              className={`text-[18px] font-medium tabular-nums ${scoreTone(part.score) === "good" ? "text-good" : "text-warn"}`}
+            >
+              {part.score.toFixed(1)}
+            </span>
+          </div>
+          <div aria-hidden className="mt-2 h-1.5 rounded-full bg-line">
+            <div
+              className={`h-full rounded-full ${scoreTone(part.score) === "good" ? "bg-good" : "bg-warn"}`}
+              style={{ width: `${Math.max(0, Math.min(100, part.score * 10))}%` }}
+            />
+          </div>
+          <p className="mt-2 text-[13px] leading-[20px] text-ink-3">{part.note}</p>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function ScoreReveal() {
   const router = useRouter();
   const params = useSearchParams();
   const report = useReport();
   const stageParam = params.get("stage");
-  const stage: "strength" | Metric = isMetric(stageParam) ? stageParam : "strength";
-  const index = stage === "strength" ? -1 : METRICS.indexOf(stage);
+  const stage: "strength" | Step = isStep(stageParam) ? stageParam : "strength";
+  const index = stage === "strength" ? -1 : STEPS.indexOf(stage);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const firstRender = useRef(true);
-  const [reduced] = useState(() => (typeof window === "undefined" ? false : prefersReducedMotion()));
-  const [strengthDone, setStrengthDone] = useState(reduced);
-  const markStrengthDone = useCallback(() => setStrengthDone(true), []);
+  const [strengthSeen, setStrengthSeen] = useState(false);
+  const markStrengthSeen = useCallback(() => setStrengthSeen(true), []);
 
   const physique = report.status === "ready" ? report.data.physique : null;
 
@@ -189,19 +190,16 @@ export function ScoreReveal() {
   }, [stage]);
 
   const readyData = report.status === "ready" ? report.data : null;
-  const lines = useMemo(
-    () => (readyData ? strengthLines(readyData.physique) : []),
-    [readyData],
-  );
+  const strengths = useMemo(() => strengthReveal(readyData?.physique ?? null), [readyData]);
 
   if (report.status !== "ready" || !physique) {
     return <div className="flex flex-1 items-center justify-center text-ink-2">Loading your scores…</div>;
   }
 
   const { grade, stories, hevy } = report.data;
-  const last = index === METRICS.length - 1;
+  const last = index === STEPS.length - 1;
 
-  function go(next: "strength" | Metric) {
+  function go(next: "strength" | Step) {
     router.push(next === "strength" ? "/reveal" : `/reveal?stage=${next}`, { scroll: false });
   }
 
@@ -230,45 +228,49 @@ export function ScoreReveal() {
 
       <main className="mx-auto flex w-full max-w-[640px] flex-1 flex-col px-5 pb-16 pt-8 md:px-8">
         {stage === "strength" ? (
-          <StrengthStage
-            lines={lines}
+          <StrengthsReveal
+            reveal={strengths}
             headingRef={headingRef}
-            done={strengthDone}
-            onDone={markStrengthDone}
+            startAtRecap={strengthSeen}
+            onSeen={markStrengthSeen}
             onNext={() => go("coverage")}
           />
         ) : (
           <>
             <nav aria-label="Score categories">
               <ol className="flex items-center gap-2">
-                {METRICS.map((metric, position) => (
+                {STEPS.map((step, position) => (
                   <li
-                    key={metric}
+                    key={step}
                     className="flex flex-1 flex-col gap-2"
-                    aria-current={metric === stage ? "step" : undefined}
+                    aria-current={step === stage ? "step" : undefined}
                   >
                     <span
                       aria-hidden
                       className={`h-1 rounded-full transition-colors ${position <= index ? "bg-accent" : "bg-line"}`}
                     />
                     <span
-                      className={`text-[12px] font-medium leading-[18px] ${metric === stage ? "text-ink" : "text-ink-3"}`}
+                      className={`text-[12px] font-medium leading-[18px] ${step === stage ? "text-ink" : "text-ink-3"}`}
                     >
-                      {METRIC_LABEL[metric]}
+                      {STEP_LABEL[step]}
                     </span>
                   </li>
                 ))}
               </ol>
             </nav>
             <div key={stage}>
-            <MetricStage metric={stage} score={grade[stage].score} story={stories[stage]} headingRef={headingRef} />
-            <ScoreActions
-              index={index}
-              last={last}
-              grade={grade}
-              onBack={() => go(index === 0 ? "strength" : METRICS[index - 1])}
-              onNext={() => (last ? finish() : go(METRICS[index + 1]))}
-            />
+              {stage === "overall" ? (
+                <OverallStage grade={grade} headingRef={headingRef} />
+              ) : (
+                <MetricStage metric={stage} score={grade[stage].score} story={stories[stage]} headingRef={headingRef} />
+              )}
+              <ScoreActions
+                index={index}
+                last={last}
+                delay={stage === "overall" ? OVERALL_READ_MS + OVERALL_COUNT_MS : READ_MS + COUNT_MS}
+                onBack={() => go(index === 0 ? "strength" : STEPS[index - 1])}
+                onNext={() => (last ? finish() : go(STEPS[index + 1]))}
+              />
             </div>
           </>
         )}
@@ -277,49 +279,17 @@ export function ScoreReveal() {
   );
 }
 
-function StrengthStage({
-  lines,
-  headingRef,
-  done,
-  onDone,
-  onNext,
-}: {
-  lines: string[];
-  headingRef: RefObject<HTMLHeadingElement | null>;
-  done: boolean;
-  onDone: () => void;
-  onNext: () => void;
-}) {
-  return (
-    <section className="mt-10 flex flex-1 flex-col">
-      <p className="hg-eyebrow">Before the scores</p>
-      <h1 ref={headingRef} tabIndex={-1} className="hg-h2 mt-2 outline-none">
-        What&apos;s already working
-      </h1>
-      <div className="mt-8">
-        <TypedLines lines={lines} onDone={onDone} />
-      </div>
-      {done ? (
-        <div className="hg-rise mt-10">
-          <Button onClick={onNext}>
-            See your scores <span aria-hidden>→</span>
-          </Button>
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
 function ScoreActions({
   index,
   last,
-  grade,
+  delay,
   onBack,
   onNext,
 }: {
   index: number;
   last: boolean;
-  grade: Grade;
+  /** Buttons wait until the score has landed. */
+  delay: number;
   onBack: () => void;
   onNext: () => void;
 }) {
@@ -328,44 +298,87 @@ function ScoreActions({
 
   useEffect(() => {
     if (reduced || ready) return;
-    const timer = window.setTimeout(() => setReady(true), READ_MS + COUNT_MS);
+    const timer = window.setTimeout(() => setReady(true), delay);
     return () => window.clearTimeout(timer);
-  }, [ready, reduced]);
+  }, [ready, reduced, delay]);
 
   if (!ready) return null;
 
   return (
-    <>
-      {last ? (
-        <div className="hg-rise mt-8 flex flex-col items-center gap-1 text-center">
-          <span className="text-[13px] font-medium tracking-wide text-ink-3">Overall</span>
-          <span className="flex items-baseline gap-1">
-            <span
-              className={`text-[28px] font-medium leading-none tabular-nums md:text-[32px] ${
-                scoreTone(grade.overall) === "good" ? "text-good" : "text-warn"
-              }`}
-            >
-              {grade.overall.toFixed(1)}
-            </span>
-            <span className="text-[14px] text-ink-3">/ 10</span>
-          </span>
-          <StatusLabel tone={scoreTone(grade.overall)}>{scoreStatus(grade.overall)}</StatusLabel>
-        </div>
-      ) : null}
-      <div className="hg-rise mt-10 flex flex-col items-center gap-3">
-        <div className="flex w-full items-center justify-center gap-3">
-          <Button variant="secondary" onClick={onBack}>
-            <span aria-hidden>←</span> Back
-          </Button>
-          <Button onClick={onNext}>
-            {last ? "See my next steps" : `Next: ${METRIC_LABEL[METRICS[index + 1]]}`} <span aria-hidden>→</span>
-          </Button>
-        </div>
-        <p className="text-[14px] leading-[22px] text-ink-3">
-          {index + 1} of {METRICS.length}
-        </p>
+    <div className="hg-rise mt-10 flex flex-col items-center gap-3">
+      <div className="flex w-full items-center justify-center gap-3">
+        <Button variant="secondary" onClick={onBack}>
+          <span aria-hidden>←</span> Back
+        </Button>
+        <Button onClick={onNext}>
+          {last ? "See my next steps" : `Next: ${STEP_LABEL[STEPS[index + 1]]}`} <span aria-hidden>→</span>
+        </Button>
       </div>
-    </>
+      <p className="text-[14px] leading-[22px] text-ink-3">
+        {index + 1} of {STEPS.length}
+      </p>
+    </div>
+  );
+}
+
+/** The last reveal: everything rolled into one number. */
+function OverallStage({ grade, headingRef }: { grade: Grade; headingRef: RefObject<HTMLHeadingElement | null> }) {
+  const phase = usePhases(OVERALL_READ_MS, OVERALL_COUNT_MS);
+  const overall = grade.overall;
+  const weighted = METRICS.reduce((sum, metric) => sum + OVERALL_WEIGHTS[metric] * grade[metric].score, 0);
+  const weakest = METRICS.reduce((low, metric) => (grade[metric].score < grade[low].score ? metric : low), METRICS[0]);
+  const capped = weighted - overall >= 0.1;
+
+  return (
+    <section className="mt-10 flex flex-col items-center text-center">
+      <p className="hg-eyebrow">Overall</p>
+      <h1 ref={headingRef} tabIndex={-1} className="hg-h2 mt-2 outline-none">
+        So, where does your training land?
+      </h1>
+      <div className="mt-8">
+        {phase === "reading" ? (
+          <Thinker lines={THINKING.overall} duration={OVERALL_READ_MS} />
+        ) : (
+          <div className="hg-pop">
+            <ScoreRing score={overall} size={208} duration={OVERALL_COUNT_MS} />
+          </div>
+        )}
+      </div>
+      {phase === "done" ? (
+        <div className="hg-rise flex w-full flex-col items-center">
+          <div className="mt-3">
+            <StatusLabel tone={scoreTone(overall)}>{scoreStatus(overall)}</StatusLabel>
+          </div>
+          <p className="mt-6 max-w-[520px] text-[22px] font-medium leading-[32px] text-ink">{overviewHeadline(overall)}</p>
+          <ul className="mt-8 grid w-full grid-cols-3 gap-2">
+            {METRICS.map((metric) => (
+              <li key={metric} className="flex flex-col items-center gap-1 rounded-card bg-surface px-3 py-4">
+                <span className="text-[13px] font-medium text-ink-3">{METRIC_LABEL[metric]}</span>
+                <span
+                  className={`text-[22px] font-medium leading-none tabular-nums ${
+                    scoreTone(grade[metric].score) === "good" ? "text-good" : "text-warn"
+                  }`}
+                >
+                  {grade[metric].score.toFixed(1)}
+                </span>
+                <span className="text-[12px] text-ink-3">{Math.round(OVERALL_WEIGHTS[metric] * 100)}% of overall</span>
+              </li>
+            ))}
+          </ul>
+          {capped ? (
+            <p className="mt-4 max-w-[520px] text-[14px] leading-[22px] text-ink-3">
+              Held to {overall.toFixed(1)} because {METRIC_LABEL[weakest].toLowerCase()} is at{" "}
+              {grade[weakest].score.toFixed(1)}. The overall can&apos;t sit more than {OVERALL_FLOOR_MARGIN} points above
+              your weakest score.
+            </p>
+          ) : null}
+        </div>
+      ) : (
+        <p className="sr-only" role="status">
+          {phase === "reading" ? "Adding up your overall score" : `Overall ${overall.toFixed(1)} out of 10`}
+        </p>
+      )}
+    </section>
   );
 }
 

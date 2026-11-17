@@ -13,18 +13,50 @@ const ACCEPT = "image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.hei
 const DIRECT_TYPES = ["image/jpeg", "image/png", "image/webp"];
 const DIRECT_EXT = /\.(jpe?g|png|webp)$/i;
 
+/** Long edge sent to Claude. Plenty for a physique read, and well under the API's per-image limits. */
+const MAX_EDGE_PX = 2048;
+/** Files already this small and this size in pixels go up untouched. */
+const SMALL_ENOUGH_BYTES = 1_500_000;
+
+/**
+ * Phone photos are often 8–12 MB, which is over what the vision API takes per
+ * image. Re-encode to a JPEG no wider than MAX_EDGE_PX. Falls back to the
+ * original file if the browser can't decode it.
+ */
+async function downscale(file: File): Promise<File> {
+  let bitmap: ImageBitmap;
+  try {
+    bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+  } catch {
+    return file;
+  }
+  const scale = Math.min(1, MAX_EDGE_PX / Math.max(bitmap.width, bitmap.height));
+  if (scale === 1 && file.size <= SMALL_ENOUGH_BYTES) {
+    bitmap.close();
+    return file;
+  }
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  canvas.getContext("2d")?.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.86));
+  if (!blob) return file;
+  return new File([blob], file.name.replace(/\.[^.]+$/, "") + ".jpg", { type: "image/jpeg" });
+}
+
 async function prepareFile(file: File): Promise<File> {
   const header = new Uint8Array(await file.slice(0, 16).arrayBuffer());
   if (looksLikeHeic(file.name, file.type, header)) {
     const heic2any = (await import("heic2any")).default;
     const converted = await heic2any({ blob: file, toType: "image/jpeg", quality: 0.82 });
     const blob = Array.isArray(converted) ? converted[0] : converted;
-    return new File([blob], file.name.replace(/\.(heic|heif)$/i, "") + ".jpg", { type: "image/jpeg" });
+    return downscale(new File([blob], file.name.replace(/\.(heic|heif)$/i, "") + ".jpg", { type: "image/jpeg" }));
   }
   if (!DIRECT_TYPES.includes(file.type) && !DIRECT_EXT.test(file.name)) {
     throw new Error(`${file.name} isn't a supported photo. Use ${ACCEPTED_LABEL.split(" ·")[0]}.`);
   }
-  return file;
+  return downscale(file);
 }
 
 function megabytes(bytes: number): string {

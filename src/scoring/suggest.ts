@@ -1,6 +1,7 @@
 import { catalogEntries, getExercise } from "./catalog";
 import { LOW_AESTHETIC_PRIORITY_REGIONS, REGION_META, regionVerb, type RegionId } from "./regions";
-import { gradeSplit } from "./score";
+import { ACTIVE_ROUTINE_WEEKS, isRoutineDay, isSkipped, perWeekOf } from "./logged";
+import { backToBackPairs, gradeSplit, HEAVY_REGIONS, primarySetsOn } from "./score";
 import type {
   ExerciseDef,
   Grade,
@@ -17,7 +18,7 @@ export type ScoreSnapshot = {
   overall: number;
 };
 
-export type SuggestionKind = "add" | "swap" | "add_sets" | "cut_sets" | "move";
+export type SuggestionKind = "add" | "swap" | "add_sets" | "cut_sets" | "move" | "resume";
 
 /** A routine edit that can be re-applied to the original split in any combination. */
 export type PlannedChange =
@@ -25,9 +26,16 @@ export type PlannedChange =
   | { op: "add_sets"; dayId: string; exerciseId: string; sets: number }
   | { op: "swap"; dayId: string; fromId: string; toId: string; sets: number }
   | { op: "cut_sets"; dayId: string; exerciseId: string; sets: number }
-  | { op: "move"; fromDayId: string; toDayId: string; exerciseId: string };
+  | { op: "move"; fromDayId: string; toDayId: string; exerciseId: string }
+  /** Do a routine you've stopped doing this many times a week again. */
+  | { op: "resume"; dayId: string; perWeek: number };
 
-export type ExerciseSlot = { name: string; sets: number };
+export type ExerciseSlot = {
+  name: string;
+  sets: number;
+  /** Rep target, e.g. "8–10". Filled in from your logs by the report. */
+  reps?: string;
+};
 
 type CandidateDetail = {
   kind: SuggestionKind;
@@ -41,6 +49,8 @@ type CandidateDetail = {
   suggested?: ExerciseSlot;
   /** Destination day for a move. */
   toDayTitle?: string;
+  /** For a resume: what the routine has in it. */
+  resume?: { exercises: string[] };
 };
 
 export type Suggestion = Omit<CandidateDetail, "key"> & {
@@ -60,7 +70,6 @@ type Candidate = CandidateDetail & { split: Split };
 const MAX_STEPS = 5;
 const MIN_GAIN = 0.08;
 const MAX_METRIC_DROP = 0.8;
-const HEAVY_REGIONS: RegionId[] = ["chest_mid", "chest_upper", "quads", "hamstrings", "lats", "erectors"];
 /** Small tie-breaks so a swap or extra sets beat adding a whole new movement at equal gain. */
 const KIND_COST: Record<SuggestionKind, number> = {
   add_sets: 0,
@@ -68,6 +77,8 @@ const KIND_COST: Record<SuggestionKind, number> = {
   cut_sets: 0,
   move: 0.02,
   add: 0.04,
+  // Never in the greedy plan; see resumeSuggestions.
+  resume: 0,
 };
 
 export function snapshot(grade: Grade): ScoreSnapshot {
@@ -110,6 +121,10 @@ function applyChange(split: Split, change: PlannedChange): void {
   }
   const day = split.days.find((candidate) => candidate.id === change.dayId);
   if (!day) return;
+  if (change.op === "resume") {
+    day.perWeek = Math.max(perWeekOf(day), change.perWeek);
+    return;
+  }
   if (change.op === "add") {
     if (day.exercises.some((item) => item.exerciseId === change.exerciseId)) return;
     day.exercises.push({ exerciseId: change.exerciseId, sets: normalSets(change.sets) });
@@ -173,7 +188,7 @@ function needReason(row: RegionBreakdown): string {
   const verb = regionVerb(row.region);
   const range = `${row.targetLow}–${row.targetHigh}`;
   if (row.priority === "lagging" && !row.hasPrimary) {
-    return `${name} ${verb} a priority, and nothing in your split trains ${verb === "are" ? "them" : "it"} directly.`;
+    return `${name} ${verb} a priority, and nothing you've done lately trains ${verb === "are" ? "them" : "it"} directly.`;
   }
   if (row.priority === "lagging") {
     return `${name} ${verb} a priority and ${verb === "are" ? "get" : "gets"} ${row.effectiveSets} effective sets a week. The target for a priority is about ${range}.`;
@@ -206,14 +221,7 @@ function surplusRegions(grade: Grade): RegionBreakdown[] {
 }
 
 function primarySetsOnDay(split: Split, dayIndex: number, region: RegionId): number {
-  let total = 0;
-  for (const item of split.days[dayIndex].exercises) {
-    const def = getExercise(item.exerciseId);
-    if (def.stimulus.some((stim) => stim.region === region && stim.role === "primary")) {
-      total += workingCount(item.sets);
-    }
-  }
-  return total;
+  return primarySetsOn(split.days[dayIndex], region);
 }
 
 function dayGroups(split: Split, dayIndex: number): Set<string> {
@@ -244,6 +252,7 @@ function hostsGroup(split: Split, dayIndex: number, region: RegionId): boolean {
   for (const allowed of [[group], RELATED_GROUPS[group] ?? []]) {
     const hosts = split.days
       .map((_, index) => index)
+      .filter((index) => !isSkipped(split.days[index]))
       .filter((index) => allowed.some((name) => dayGroups(split, index).has(name)));
     if (hosts.length > 0) return hosts.includes(dayIndex);
   }
@@ -254,12 +263,57 @@ function dayHas(split: Split, dayIndex: number, exerciseId: string): boolean {
   return split.days[dayIndex].exercises.some((item) => item.exerciseId === exerciseId);
 }
 
+/**
+ * A saved routine you haven't done lately that already trains what's behind.
+ * Often the fix is just following your own split.
+ */
+function resumeCandidates(split: Split, targets: RegionBreakdown[]): Candidate[] {
+  if (split.source !== "logged") return [];
+  return split.days.flatMap((day) => {
+    if (!isSkipped(day) || !isRoutineDay(day)) return [];
+    const hits = targets.filter((row) => primarySetsOn(day, row.region) > 0);
+    if (hits.length === 0) return [];
+    const names = [...new Set(day.exercises.map((item) => getExercise(item.exerciseId).name))];
+    const shown = hits.slice(0, 2);
+    const regions = shown.map((row) => lower(row.region));
+    const regionText = regions.length > 1 ? `${regions[0]} and ${regions[1]}` : regions[0];
+    // Name the movements that train those muscles, one per muscle where possible.
+    const relevant = [
+      ...new Set(
+        shown.flatMap((row) =>
+          day.exercises
+            .map((item) => getExercise(item.exerciseId))
+            .filter((def) => primaryRegion(def) === row.region)
+            .slice(0, 1)
+            .map((def) => def.name),
+        ),
+      ),
+    ];
+    const sets = day.exercises.reduce((sum, item) => sum + workingCount(item.sets), 0);
+    return [
+      candidate(split, {
+        kind: "resume",
+        key: `resume:${day.id}`,
+        title: `Get back to ${day.title} once a week`,
+        dayTitle: day.title,
+        region: hits[0].region,
+        reason: `${needReason(hits[0])} You haven't logged ${day.title} in the last ${ACTIVE_ROUTINE_WEEKS} weeks, and it already has ${(relevant.length > 0 ? relevant : names.slice(0, 2)).join(" and ")} for ${regionText}. Following your own split closes this gap before anything new.`,
+        change: { op: "resume", dayId: day.id, perWeek: 1 },
+        suggested: { name: day.title, sets },
+        resume: { exercises: names },
+      }),
+    ];
+  });
+}
+
 function candidates(split: Split, grade: Grade): Candidate[] {
   const out: Candidate[] = [];
   const targets = targetRegions(grade);
   const targetSet = new Set(targets.map((row) => row.region));
 
   split.days.forEach((day, dayIndex) => {
+    // Edits go on days you actually train; a dropped routine is offered as a resume instead.
+    if (isSkipped(day)) return;
     day.exercises.forEach((item) => {
       const def = getExercise(item.exerciseId);
       const primary = primaryRegion(def);
@@ -334,6 +388,7 @@ function candidates(split: Split, grade: Grade): Candidate[] {
 
   for (const row of surplusRegions(grade)) {
     split.days.forEach((day) => {
+      if (isSkipped(day)) return;
       day.exercises.forEach((item) => {
         const def = getExercise(item.exerciseId);
         if (primaryRegion(def) !== row.region) return;
@@ -360,26 +415,31 @@ function candidates(split: Split, grade: Grade): Candidate[] {
     });
   }
 
-  for (let a = 0; a < split.days.length - 1; a += 1) {
-    const b = a + 1;
+  const pairs = backToBackPairs(split);
+  const adjacent = (x: string, y: string) =>
+    x === y || pairs.some(([from, to]) => (from.id === x && to.id === y) || (from.id === y && to.id === x));
+  for (const [a, b] of pairs) {
     for (const region of HEAVY_REGIONS) {
-      if (primarySetsOnDay(split, a, region) < 2 || primarySetsOnDay(split, b, region) < 2) continue;
-      split.days[b].exercises.forEach((item) => {
+      if (primarySetsOn(a, region) < 2 || primarySetsOn(b, region) < 2) continue;
+      b.exercises.forEach((item) => {
         const def = getExercise(item.exerciseId);
         if (primaryRegion(def) !== region) return;
         const count = workingCount(item.sets);
-        split.days.forEach((target, targetIndex) => {
-          if (Math.abs(targetIndex - b) <= 1) return;
+        split.days.forEach((target) => {
+          if (isSkipped(target) || adjacent(target.id, b.id) || target.id === a.id) return;
           out.push(
             candidate(split, {
               kind: "move",
-              key: `${split.days[b].id}:${item.exerciseId}`,
-              title: `Move ${def.name} from ${split.days[b].title} to ${target.title}`,
-              dayTitle: split.days[b].title,
+              key: `${b.id}:${item.exerciseId}`,
+              title: `Move ${def.name} from ${b.title} to ${target.title}`,
+              dayTitle: b.title,
               toDayTitle: target.title,
               region,
-              reason: `${split.days[a].title} and ${split.days[b].title} both train ${lower(region)} hard on back-to-back days. Moving it gives that tissue time to recover before you load it again.`,
-              change: { op: "move", fromDayId: split.days[b].id, toDayId: target.id, exerciseId: item.exerciseId },
+              reason:
+                a.id === b.id
+                  ? `You often do ${b.title} two days running, so ${lower(region)} gets hit hard back to back. Moving it gives that tissue time to recover before you load it again.`
+                  : `${a.title} and ${b.title} both train ${lower(region)} hard on back-to-back days. Moving it gives that tissue time to recover before you load it again.`,
+              change: { op: "move", fromDayId: b.id, toDayId: target.id, exerciseId: item.exerciseId },
               current: { name: def.name, sets: count },
               suggested: { name: def.name, sets: count },
             }),
@@ -447,4 +507,22 @@ export function buildPlan(input: ScoreInput, maxSteps = MAX_STEPS): Plan {
   }
 
   return { steps, start, end: snapshot(grade) };
+}
+
+/**
+ * Saved routines you haven't done lately that train what's behind. Kept out
+ * of the plan: the plan only changes days your logs show you train, so every
+ * step is grounded in what you actually do. Each is scored on its own against
+ * your current training.
+ */
+export function resumeSuggestions(input: ScoreInput): Suggestion[] {
+  const grade = gradeSplit(input);
+  const before = snapshot(grade);
+  return resumeCandidates(input.split, targetRegions(grade)).flatMap((option) => {
+    const after = snapshot(gradeSplit({ ...input, split: option.split }));
+    if (balanceScore(after) - balanceScore(before) < MIN_GAIN) return [];
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { key, split: _applied, ...detail } = option;
+    return [{ ...detail, id: `resume-${key}`, before, after }];
+  });
 }

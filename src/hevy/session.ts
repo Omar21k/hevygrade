@@ -1,12 +1,15 @@
 import { readSessionJson, writeSessionJson } from "@/lib/sessionStore";
-import type { ExerciseDef, HistorySet, Split } from "@/scoring";
+import type { ExerciseDef, HistorySet, LoggedSession, Split } from "@/scoring";
 
 export type HevyPayload = {
   user: { name: string; id?: string };
+  /** Your saved Hevy routines. Scoring uses what you logged; these are context for fixes. */
   split: Split;
   exercises: ExerciseDef[];
   /** Logged sets from the recent progression window only (see PROGRESSION_WINDOW_DAYS). */
   history: HistorySet[];
+  /** Workouts in `history`: titles and routine links. Missing on older imports. */
+  sessions?: LoggedSession[];
   unmatched: string[];
   days: { id: string; title: string; movements: number }[];
   /** Every workout on the account, not just those in `history`. */

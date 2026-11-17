@@ -1,5 +1,7 @@
 "use client";
 
+import { ACTIVE_ROUTINE_WEEKS } from "@/scoring";
+import { EvidenceList } from "./Evidence";
 import { Button, TextLink } from "@/components/ui";
 import { useReadyReport } from "@/report/ReportContext";
 import {
@@ -18,13 +20,38 @@ function Slot({ label, slot, empty }: { label: string; slot?: ComparisonRow["cur
     <div className="min-w-0">
       <p className="text-[12px] font-medium leading-[18px] text-ink-3">{label}</p>
       <p className={`mt-0.5 ${slot ? "text-ink" : "text-ink-3"}`}>
-        {slot ? `${slot.name} · ${slot.sets} set${slot.sets === 1 ? "" : "s"}` : empty}
+        {slot ? `${slot.name} · ${slot.sets} set${slot.sets === 1 ? "" : "s"}${slot.reps ? ` × ${slot.reps}` : ""}` : empty}
       </p>
     </div>
   );
 }
 
+function ResumeComparison({ row, resume }: { row: ComparisonRow; resume: NonNullable<ComparisonRow["resume"]> }) {
+  return (
+    <div className="rounded-control bg-bg/60 px-4 py-3">
+      <p className="hg-eyebrow">{row.dayTitle}</p>
+      <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto_1fr] sm:items-center sm:gap-4">
+        <div className="min-w-0">
+          <p className="text-[12px] font-medium leading-[18px] text-ink-3">Logged</p>
+          <p className="mt-0.5 text-ink-3">Not in the last {ACTIVE_ROUTINE_WEEKS} weeks</p>
+        </div>
+        <span aria-hidden className="hidden text-ink-3 sm:block">
+          →
+        </span>
+        <div className="min-w-0">
+          <p className="text-[12px] font-medium leading-[18px] text-ink-3">Suggested</p>
+          <p className="mt-0.5 text-ink">Once a week, as saved in Hevy</p>
+        </div>
+      </div>
+      {resume.exercises.length > 0 ? (
+        <p className="mt-2 text-[13px] leading-[20px] text-ink-3">{resume.exercises.join(" · ")}</p>
+      ) : null}
+    </div>
+  );
+}
+
 function Comparison({ row }: { row: ComparisonRow }) {
+  if (row.resume) return <ResumeComparison row={row} resume={row.resume} />;
   const moved = row.toDayTitle !== undefined;
   return (
     <div className="rounded-control bg-bg/60 px-4 py-3">
@@ -99,6 +126,14 @@ function RecommendationCard({
             <Comparison key={`${row.dayTitle}-${index}`} row={row} />
           ))}
         </div>
+        {rec.evidence.length > 0 ? (
+          <div className="mt-5">
+            <h3 className="text-[14px] font-medium text-ink">The numbers behind it</h3>
+            <div className="mt-2">
+              <EvidenceList items={rec.evidence} />
+            </div>
+          </div>
+        ) : null}
         <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
           <div>
             <h3 className="text-[14px] font-medium text-ink">Why this helps</h3>
@@ -129,7 +164,7 @@ function RecommendationCard({
 }
 
 export function PlanView() {
-  const { recommendations, choices, setChoices, split, lagMap, hevy, grade } = useReadyReport();
+  const { recommendations, choices, setChoices, scoring, grade } = useReadyReport();
   const [expanded, setExpanded] = useState<Set<string>>(
     () => new Set(recommendations[0] ? [recommendations[0].id] : []),
   );
@@ -162,8 +197,8 @@ export function PlanView() {
       .filter((rec) => choices.selected.includes(rec.id))
       .flatMap((rec) => rec.changes);
     if (changes.length === 0) return null;
-    return projectChanges({ split, lagMap, history: hevy.history }, changes);
-  }, [recommendations, choices.selected, split, lagMap, hevy.history]);
+    return projectChanges(scoring, changes);
+  }, [recommendations, choices.selected, scoring]);
 
   function update(next: { selected?: string[]; dismissed?: string[] }) {
     setChoices({
@@ -294,7 +329,9 @@ export function PlanView() {
               rec.rows.map((row, index) => (
                 <li key={`${rec.id}-${index}`}>
                   <span className="text-ink">{row.dayTitle}:</span>{" "}
-                  {row.toDayTitle
+                  {row.resume
+                    ? "do it once a week again"
+                    : row.toDayTitle
                     ? `move ${row.current?.name} to ${row.toDayTitle}`
                     : row.current && row.suggested && row.current.name !== row.suggested.name
                       ? `replace ${row.current.name} with ${row.suggested.name} (${row.suggested.sets} sets)`

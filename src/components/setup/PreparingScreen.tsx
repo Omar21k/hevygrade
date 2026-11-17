@@ -12,6 +12,7 @@ const LINES = [
   "Checking shoulders and arms",
   "Looking at your back",
   "Comparing that with your routines",
+  "Spotting what's already working",
   "Looking at gaps",
 ];
 
@@ -87,12 +88,12 @@ export function PreparingScreen() {
           <Wordmark />
         </div>
       </header>
-      <main className="mx-auto flex w-full max-w-[560px] flex-1 flex-col justify-center px-5 py-16 md:px-8">
+      <main className="mx-auto flex w-full max-w-[560px] flex-1 flex-col items-center justify-center px-5 py-16 text-center md:px-8">
         {error ? (
-          <div role="alert">
+          <div role="alert" className="flex flex-col items-center">
             <h1 className="hg-h1">Could not read those photos</h1>
             <p className="mt-4 text-ink-2">{error}</p>
-            <div className="mt-8 flex flex-wrap gap-3">
+            <div className="mt-8 flex flex-wrap justify-center gap-3">
               <Button onClick={() => router.push("/photos")}>Back to photos</Button>
             </div>
           </div>
@@ -103,9 +104,6 @@ export function PreparingScreen() {
             <p key={line} className="hg-swap mt-6 min-h-[36px] text-[26px] font-medium leading-[34px] text-ink" aria-live="polite">
               {line}…
             </p>
-            <div className="relative mt-8 h-1 w-full max-w-[240px] overflow-hidden rounded-full bg-line">
-              <div className="hg-scan absolute inset-y-0 w-1/3 rounded-full bg-accent" />
-            </div>
           </>
         )}
       </main>

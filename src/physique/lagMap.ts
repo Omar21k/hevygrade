@@ -14,6 +14,18 @@ import type { PhysiqueAssessment, RegionDevelopment } from "./types";
 const HARD_TO_SEE = new Set<RegionId>(["traps", "erectors", "forearms", "abs"]);
 const HARD_TO_SEE_LAG_CONFIDENCE = 0.7;
 
+/** At or under this, or this far under the person's own average, a muscle clearly looks behind. */
+const CLEAR_LAG_DEVELOPMENT = 2.2;
+const CLEAR_LAG_RELATIVE = -0.7;
+/**
+ * Everyone has muscles that respond less than others. One this far under the
+ * person's own average is a weak point worth prioritizing, even without a clear lag.
+ */
+export const WEAK_POINT_RELATIVE = -0.3;
+const WEAK_POINT_CONFIDENCE = 0.55;
+/** Weak points are relative, so cap them; otherwise half of any physique sits under its own average. */
+export const MAX_WEAK_POINTS = 3;
+
 function mean(values: number[]): number {
   if (values.length === 0) return 3;
   return values.reduce((sum, value) => sum + value, 0) / values.length;
@@ -27,6 +39,8 @@ function mean(values: number[]): number {
 export function lagMapFromPhysique(assessment: PhysiqueAssessment): {
   lagMap: LagMap;
   findings: Finding[];
+  /** Lagging because they trail the person's own average, not because they clearly look behind. */
+  weakPoints: RegionId[];
 } {
   const usable = assessment.developments.filter(
     (row) =>
@@ -50,7 +64,7 @@ export function lagMapFromPhysique(assessment: PhysiqueAssessment): {
     const lowAesthetic = LOW_AESTHETIC_PRIORITY_REGIONS.includes(row.region);
     if (
       !lowAesthetic &&
-      (row.development <= 2.2 || relative <= -0.7) &&
+      (row.development <= CLEAR_LAG_DEVELOPMENT || relative <= CLEAR_LAG_RELATIVE) &&
       lagEvidence &&
       row.confidence >= 0.45
     ) {
@@ -76,6 +90,33 @@ export function lagMapFromPhysique(assessment: PhysiqueAssessment): {
     }
   }
 
+  // Weakest muscles relative to this physique, when they aren't already a clear lag.
+  const weakPoints = usable
+    .filter(
+      (row) =>
+        lagMap[row.region] === "maintain" &&
+        !LOW_AESTHETIC_PRIORITY_REGIONS.includes(row.region) &&
+        row.confidence >= (HARD_TO_SEE.has(row.region) ? HARD_TO_SEE_LAG_CONFIDENCE : WEAK_POINT_CONFIDENCE) &&
+        row.development - baseline <= WEAK_POINT_RELATIVE,
+    )
+    .sort((a, b) => a.development - b.development)
+    .slice(0, MAX_WEAK_POINTS);
+  for (const row of weakPoints) {
+    lagMap[row.region] = "lagging";
+    const label = REGION_META[row.region].label;
+    findings.push({
+      id: `physique-weak-${row.region}`,
+      metric: "coverage",
+      severity: "warn",
+      region: row.region,
+      title: `${label} ${regionVerb(row.region) === "are" ? "trail" : "trails"} the rest of your physique`,
+      detail:
+        row.note?.trim() ||
+        `Development ${row.development.toFixed(1)}/5 vs your physique average ${baseline.toFixed(1)}. Not a clear lag, but one of your weaker areas.`,
+      suggestedChange: `Treat ${label.toLowerCase()} as a priority: more weekly volume, or harder sets if volume is already high.`,
+    });
+  }
+
   if (assessment.blindSpots.length > 0) {
     findings.push({
       id: "physique-blind-spots",
@@ -86,7 +127,7 @@ export function lagMapFromPhysique(assessment: PhysiqueAssessment): {
     });
   }
 
-  return { lagMap, findings };
+  return { lagMap, findings, weakPoints: weakPoints.map((row) => row.region) };
 }
 
 export function mergeAssessments(rows: RegionDevelopment[]): RegionDevelopment[] {

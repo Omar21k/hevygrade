@@ -1,4 +1,4 @@
-import { getExercise } from "./catalog";
+import { getExercise, tryGetExercise } from "./catalog";
 import { clamp, round1, weightedMean } from "./math";
 import {
   REGION_META,
@@ -7,13 +7,18 @@ import {
   type RegionId,
 } from "./regions";
 import type {
+  CoverageParts,
   Finding,
   Grade,
   GrowthParts,
   HistorySet,
   RegionBreakdown,
+  RoutineDay,
   ScoreInput,
 } from "./types";
+import { perWeekOf } from "./logged";
+import { describeTrend, exerciseTrend, formatDay, recentHistory } from "./trends";
+import { LOGGED_WINDOW_DAYS } from "./logged";
 import { analyzeVolume, regionLabel, regionTargets } from "./volume";
 
 function coverageForRegion(
@@ -51,7 +56,7 @@ function buildBreakdown(input: ScoreInput): RegionBreakdown[] {
       label: regionLabel(region),
       priority,
       effectiveSets: round1(effectiveSets),
-      primarySets: volume?.primarySets ?? 0,
+      primarySets: round1(volume?.primarySets ?? 0),
       targetLow: targets.low,
       targetHigh: targets.high,
       mrv: targets.mrv,
@@ -67,11 +72,12 @@ function buildBreakdown(input: ScoreInput): RegionBreakdown[] {
 function scoreCoverage(
   input: ScoreInput,
   regions: RegionBreakdown[],
-): { score: number; findings: Finding[]; notes: string[] } {
+): { score: number; findings: Finding[]; notes: string[]; parts: CoverageParts } {
   const findings: Finding[] = [];
   const notes: string[] = [];
 
-  const score = weightedMean(
+  // Training part: does weekly work match what each muscle needs (photo priorities raise targets).
+  const training = weightedMean(
     regions.map((row) => ({
       value: row.coverageScore,
       weight: regionScoreWeight(row.region, row.priority),
@@ -106,8 +112,22 @@ function scoreCoverage(
     notes.push("Lagging regions are receiving stimulus in the target range.");
   }
 
-  return { score: round1(clamp(score, 0, 10)), findings, notes };
+  const trainingScore = round1(clamp(training, 0, 10));
+  const photos = input.photoBalance === undefined ? null : round1(clamp(input.photoBalance, 0, 10));
+  // Photos lead: how you look is 60%, training aimed at it is 40%.
+  const score =
+    photos === null
+      ? trainingScore
+      : COVERAGE_WEIGHTS.photos * photos + COVERAGE_WEIGHTS.training * trainingScore;
+  return {
+    score: round1(clamp(score, 0, 10)),
+    findings,
+    notes,
+    parts: { photos, training: trainingScore },
+  };
 }
+
+export const COVERAGE_WEIGHTS = { photos: 0.6, training: 0.4 } as const;
 
 function suggestionForMissingPrimary(region: RegionId): string {
   if (region === "brachialis") {
@@ -168,7 +188,8 @@ function scoreGrowth(
 
   const volumePts = growthMean(volumeRatio, 0.75) * 4;
 
-  const freqPts = growthMean((row) => (row.frequency >= 2 ? 2 : row.frequency === 1 ? 1 : 0), 1.5);
+  // Logged frequency is an average (1.5× a week), so credit scales up to twice a week.
+  const freqPts = growthMean((row) => clamp(row.frequency, 0, 2), 1.5);
 
   // Indirect work earns up to half credit; a dedicated primary movement earns full.
   const selectionPts =
@@ -194,7 +215,7 @@ function scoreGrowth(
   }
 
   for (const row of lagging) {
-    if (row.frequency < 2) {
+    if (row.frequency < 1.75) {
       findings.push({
         id: `growth-freq-${row.region}`,
         metric: "growth",
@@ -250,21 +271,7 @@ function setStrength(weightKg: number | undefined, reps: number): number {
   return weightKg && weightKg > 0 ? weightKg * (1 + reps / 30) : reps;
 }
 
-/**
- * Progression reads a recent block, not all-time: over years of history almost
- * every lift trends up, which says nothing about the current program.
- */
-export const PROGRESSION_WINDOW_DAYS = 84;
-
-/** Sets within PROGRESSION_WINDOW_DAYS of the most recent logged set. */
-export function recentHistory(history: HistorySet[]): HistorySet[] {
-  const latest = history.reduce((max, set) => (set.date > max ? set.date : max), "");
-  if (!latest) return history;
-  const cutoff = new Date(`${latest.slice(0, 10)}T00:00:00Z`);
-  cutoff.setUTCDate(cutoff.getUTCDate() - PROGRESSION_WINDOW_DAYS);
-  const from = cutoff.toISOString().slice(0, 10);
-  return history.filter((set) => set.date.slice(0, 10) >= from);
-}
+export { PROGRESSION_WINDOW_DAYS, recentHistory } from "./trends";
 
 /**
  * Trend per exercise: best set of each session, earliest third of sessions vs
@@ -300,7 +307,9 @@ function estimateProgression(input: ScoreInput): number {
   if (trends.size === 0) return UNKNOWN_PROGRESSION;
 
   const inSplit = new Set(
-    input.split.days.flatMap((day) => day.exercises.map((item) => item.exerciseId)),
+    input.split.days
+      .filter((day) => perWeekOf(day) > 0)
+      .flatMap((day) => day.exercises.map((item) => item.exerciseId)),
   );
   const current = [...trends].filter(([id]) => inSplit.has(id)).map(([, value]) => value);
   const pool = current.length > 0 ? current : [...trends.values()];
@@ -353,12 +362,14 @@ function scoreRecovery(
       metric: "recovery",
       severity: "warn",
       title: "Weekly set count is systemically high",
-      detail: `${analysis.weeklyWorkingSets} working sets across the cycle.`,
+      detail: `${Math.round(analysis.weeklyWorkingSets)} working sets a week.`,
       suggestedChange: "Trim maintenance regions first, not lagging ones.",
     });
   }
 
   deductions += consecutiveOverlap(input, regions, findings);
+  deductions += overreach(input, regions, findings);
+  deductions += volumeSpikes(input, regions, findings);
 
   const flexorLoad = regions
     .filter((row) => REGION_META[row.region].group === "arm_flexors")
@@ -387,46 +398,152 @@ function scoreRecovery(
   return { score, findings, notes };
 }
 
+/** Back-to-back pairs that happen at least every other week count against recovery. */
+const BACK_TO_BACK_MIN_PER_WEEK = 0.5;
+
+/**
+ * Pairs of days trained on consecutive dates. From logs these are real
+ * calendar pairs; from routines it's the routine order in Hevy.
+ */
+export function backToBackPairs(split: ScoreInput["split"]): [RoutineDay, RoutineDay][] {
+  const days = split.days.filter((day) => perWeekOf(day) > 0);
+  if (split.backToBack) {
+    const byId = new Map(days.map((day) => [day.id, day]));
+    return split.backToBack
+      .filter((pair) => pair.perWeek >= BACK_TO_BACK_MIN_PER_WEEK)
+      .flatMap((pair) => {
+        const from = byId.get(pair.fromDayId);
+        const to = byId.get(pair.toDayId);
+        return from && to ? [[from, to] as [RoutineDay, RoutineDay]] : [];
+      });
+  }
+  const pairs: [RoutineDay, RoutineDay][] = [];
+  for (let i = 0; i < days.length - 1; i += 1) pairs.push([days[i], days[i + 1]]);
+  return pairs;
+}
+
+export const HEAVY_REGIONS: RegionId[] = ["chest_mid", "chest_upper", "quads", "hamstrings", "lats", "erectors"];
+
+export function primarySetsOn(day: RoutineDay, region: RegionId): number {
+  let sets = 0;
+  for (const item of day.exercises) {
+    const exercise = getExercise(item.exerciseId);
+    const count = item.sets.filter((set) => set.type !== "warmup").length;
+    for (const stim of exercise.stimulus) {
+      if (stim.region === region && stim.role === "primary") sets += count;
+    }
+  }
+  return sets;
+}
+
 function consecutiveOverlap(
   input: ScoreInput,
   regions: RegionBreakdown[],
   findings: Finding[],
 ): number {
-  const days = input.split.days;
-  if (days.length < 2) return 0;
+  const logged = input.split.source === "logged";
   let penalty = 0;
-  const pairs: [number, number][] = [];
-  for (let i = 0; i < days.length - 1; i += 1) pairs.push([i, i + 1]);
-
-  const primaryOnDay = (dayIndex: number, region: RegionId) => {
-    let sets = 0;
-    for (const item of days[dayIndex].exercises) {
-      const exercise = getExercise(item.exerciseId);
-      const count = item.sets.filter((set) => set.type !== "warmup").length;
-      for (const stim of exercise.stimulus) {
-        if (stim.region === region && stim.role === "primary") sets += count;
-      }
-    }
-    return sets;
-  };
-
-  const heavyRegions: RegionId[] = ["chest_mid", "chest_upper", "quads", "hamstrings", "lats", "erectors"];
-  for (const [a, b] of pairs) {
-    for (const region of heavyRegions) {
-      if (primaryOnDay(a, region) >= 2 && primaryOnDay(b, region) >= 2) {
+  for (const [a, b] of backToBackPairs(input.split)) {
+    for (const region of HEAVY_REGIONS) {
+      if (primarySetsOn(a, region) >= 2 && primarySetsOn(b, region) >= 2) {
         penalty += 1.25;
         const row = regions.find((item) => item.region === region);
         findings.push({
-          id: `recovery-consecutive-${region}-${days[a].id}`,
+          id: `recovery-consecutive-${region}-${a.id}-${b.id}`,
           metric: "recovery",
           severity: "warn",
           region,
           title: `${row?.label ?? region} ${regionVerb(region)} trained on back-to-back days`,
-          detail: `${days[a].title} and ${days[b].title} both include primary work.`,
+          detail:
+            a.id === b.id
+              ? `You often log ${a.title} two days in a row, and it includes primary work.`
+              : logged
+                ? `You often log ${b.title} the day after ${a.title}, and both include primary work.`
+                : `${a.title} and ${b.title} both include primary work.`,
           suggestedChange: "Put a rest or an unrelated session between those days.",
         });
       }
     }
+  }
+  return penalty;
+}
+
+/** Logged exercises that train a region as a primary mover. */
+function loggedExercisesFor(history: HistorySet[], region: RegionId): string[] {
+  const ids = new Set(history.map((set) => set.exerciseId));
+  return [...ids].filter((id) =>
+    tryGetExercise(id)?.stimulus.some((stim) => stim.region === region && stim.role === "primary"),
+  );
+}
+
+/**
+ * The clearest overtraining signal logs can show: a muscle trained past its
+ * useful range while the lifts that train it go backwards.
+ */
+function overreach(input: ScoreInput, regions: RegionBreakdown[], findings: Finding[]): number {
+  const history = input.history ?? [];
+  if (history.length === 0) return 0;
+  let penalty = 0;
+  for (const row of regions) {
+    if (row.effectiveSets <= row.targetHigh) continue;
+    const trends = loggedExercisesFor(history, row.region)
+      .map((id) => ({ id, trend: exerciseTrend(history, id) }))
+      .filter((item) => item.trend && item.trend.sessions >= 3);
+    const down = trends.filter((item) => item.trend!.direction === "down");
+    if (down.length === 0 || down.length * 2 < trends.length) continue;
+    penalty += row.priority === "lagging" ? 0.75 : 1;
+    const worst = down.sort((a, b) => a.trend!.change - b.trend!.change)[0];
+    const name = getExercise(worst.id).name;
+    findings.push({
+      id: `recovery-overreach-${row.region}`,
+      metric: "recovery",
+      severity: "warn",
+      region: row.region,
+      title: `${row.label} ${regionVerb(row.region) === "are" ? "look" : "looks"} overworked`,
+      detail: `${row.effectiveSets} effective sets a week, above the ${row.targetLow}–${row.targetHigh} range, and ${describeTrend(name, worst.trend!).replace(/^[^:]+: /, `${name} is `)}`,
+      suggestedChange: `Cut ${row.label.toLowerCase()} toward ${row.targetHigh} sets a week and let ${name} recover.`,
+    });
+  }
+  return penalty;
+}
+
+const SPIKE_RATIO = 1.5;
+const SPIKE_MIN_EXTRA = 6;
+
+/** Last logged week against the weekly average: a sudden jump is harder to recover from than steady volume. */
+function volumeSpikes(input: ScoreInput, regions: RegionBreakdown[], findings: Finding[]): number {
+  const history = input.history ?? [];
+  const latest = history.reduce((max, set) => (set.date > max ? set.date : max), "");
+  if (!latest) return 0;
+  const end = Date.parse(`${latest.slice(0, 10)}T00:00:00Z`);
+  const dayIndex = (date: string) => Math.round((end - Date.parse(`${date.slice(0, 10)}T00:00:00Z`)) / 86_400_000);
+  const weeks = LOGGED_WINDOW_DAYS / 7;
+  const lastWeek = new Map<RegionId, number>();
+  const window = new Map<RegionId, number>();
+  for (const set of history) {
+    if (set.type === "warmup") continue;
+    const ago = dayIndex(set.date);
+    if (ago < 0 || ago >= LOGGED_WINDOW_DAYS) continue;
+    for (const stim of tryGetExercise(set.exerciseId)?.stimulus ?? []) {
+      window.set(stim.region, (window.get(stim.region) ?? 0) + stim.weight);
+      if (ago < 7) lastWeek.set(stim.region, (lastWeek.get(stim.region) ?? 0) + stim.weight);
+    }
+  }
+  let penalty = 0;
+  for (const row of regions) {
+    const recent = lastWeek.get(row.region) ?? 0;
+    const average = (window.get(row.region) ?? 0) / weeks;
+    if (recent < average * SPIKE_RATIO || recent - average < SPIKE_MIN_EXTRA || recent <= row.targetHigh) continue;
+    penalty += 0.5;
+    findings.push({
+      id: `recovery-spike-${row.region}`,
+      metric: "recovery",
+      severity: "info",
+      region: row.region,
+      title: `${row.label} jumped to ${round1(recent)} sets last week`,
+      detail: `Your weekly average is ${round1(average)}. The week ending ${formatDay(latest)} was a big step up.`,
+      suggestedChange: "Build volume up a few sets a week instead of all at once.",
+    });
   }
   return penalty;
 }
@@ -449,7 +566,7 @@ export function gradeSplit(input: ScoreInput): Grade {
   const overall = round1(clamp(Math.min(raw, floorCap), 0, 10));
 
   return {
-    coverage: { score: coverage.score, notes: coverage.notes },
+    coverage: { score: coverage.score, notes: coverage.notes, parts: coverage.parts },
     growth: { score: growth.score, notes: growth.notes, parts: growth.parts },
     recovery: { score: recovery.score, notes: recovery.notes },
     overall,

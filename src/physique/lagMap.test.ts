@@ -87,4 +87,67 @@ describe("physique lag map", () => {
     expect(assessment.developments).toHaveLength(1);
     expect(assessment.developments[0].region).toBe("chest_upper");
   });
+
+  it("keeps written strengths, drops unknown regions in them, and caps the list", () => {
+    const strengths = Array.from({ length: 8 }, (_, index) => ({
+      title: `Strength ${index}`,
+      detail: "From the front.",
+      regions: ["delt_side", "not_a_muscle"],
+      view: "front",
+    }));
+    const assessment = parsePhysiqueJson(
+      JSON.stringify({ viewsPresent: ["front"], developments: [], strengths, blindSpots: [], notes: [] }),
+      ["front"],
+    );
+    expect(assessment.strengths).toHaveLength(6);
+    expect(assessment.strengths?.[0]).toEqual({
+      title: "Strength 0",
+      detail: "From the front.",
+      regions: ["delt_side"],
+      view: "front",
+    });
+  });
+
+  it("prioritizes up to three weak points that trail this physique without a clear lag", () => {
+    const even = 4.2;
+    const { lagMap, weakPoints, findings } = lagMapFromPhysique({
+      viewsPresent: ["front", "side", "back"],
+      developments: [
+        { region: "chest_mid", development: even, confidence: 0.9 },
+        { region: "delt_side", development: even, confidence: 0.9 },
+        { region: "quads", development: even, confidence: 0.9 },
+        { region: "hamstrings", development: even, confidence: 0.9 },
+        { region: "biceps", development: 3.1, confidence: 0.8 },
+        { region: "triceps", development: 3.15, confidence: 0.8 },
+        { region: "chest_upper", development: 3.2, confidence: 0.8 },
+        { region: "lats", development: 3.25, confidence: 0.8 },
+        { region: "glutes", development: 3.0, confidence: 0.9 },
+        { region: "abs", development: 3.0, confidence: 0.6 },
+        { region: "delt_rear", development: 3.5, confidence: 0.4 },
+      ],
+      blindSpots: [],
+      notes: [],
+    });
+    // Weakest three first (lats also trail, but the cap is three); glutes are low priority, abs need a confident read.
+    expect(weakPoints).toEqual(["biceps", "triceps", "chest_upper"]);
+    for (const region of weakPoints) expect(lagMap[region]).toBe("lagging");
+    expect(lagMap.lats).toBe("maintain");
+    expect(lagMap.glutes).not.toBe("lagging");
+    expect(lagMap.abs).not.toBe("lagging");
+    expect(findings.some((finding) => finding.id === "physique-weak-biceps")).toBe(true);
+  });
+
+  it("finds no weak points on an even physique", () => {
+    const { weakPoints } = lagMapFromPhysique({
+      viewsPresent: ["front"],
+      developments: [
+        { region: "chest_mid", development: 3.5, confidence: 0.9 },
+        { region: "biceps", development: 3.4, confidence: 0.9 },
+        { region: "quads", development: 3.6, confidence: 0.9 },
+      ],
+      blindSpots: [],
+      notes: [],
+    });
+    expect(weakPoints).toEqual([]);
+  });
 });

@@ -1,5 +1,6 @@
 "use client";
 
+import { EvidenceList } from "./Evidence";
 import { Dialog, StatusLabel, TextLink } from "@/components/ui";
 import { useReadyReport } from "@/report/ReportContext";
 import {
@@ -43,7 +44,6 @@ export function OverviewView() {
   const [openMetric, setOpenMetric] = useState<Metric | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [overallOpen, setOverallOpen] = useState(false);
-  const top = recommendations[0];
   const focus = focusRegions(regions);
   const attentionCount = focus.length;
   const overallTone = scoreTone(grade.overall);
@@ -127,41 +127,54 @@ export function OverviewView() {
       </section>
 
       <section aria-labelledby="next-move">
-        <h2 id="next-move" className="hg-eyebrow">
-          Your next move
-        </h2>
-        {top ? (
-          <>
-            <article className="mt-3 rounded-card border border-line bg-surface p-5 md:p-6">
-              <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
-                <h3 className="flex gap-3 text-[18px] font-semibold leading-[26px]">
-                  <span className="tabular-nums text-ink-3">01</span>
-                  {top.headline}
-                </h3>
-                <span className="rounded-full bg-accent/15 px-2.5 py-0.5 text-[12px] font-medium leading-[18px] text-accent">
-                  Start here
-                </span>
-              </div>
-              <p className="mt-3 text-ink">{top.action}.</p>
-              <p className="mt-1 text-[14px] leading-[22px] text-ink-3">{top.sessionImpact}</p>
-              <div className="mt-4 flex flex-wrap items-center justify-between gap-x-6 gap-y-1">
-                <TextLink href={`/report/plan#${recAnchor(top.id)}`}>
-                  View suggested change <span aria-hidden>→</span>
-                </TextLink>
-                <p className="text-[14px] leading-[22px] text-ink-2">{impactLabel(top.impact)}</p>
-              </div>
-            </article>
-            <div className="mt-2 flex flex-wrap items-center justify-between gap-x-6">
-              <p className="text-[14px] leading-[22px] text-ink-3">
-                {recommendations.length > 1
-                  ? `${recommendations.length - 1} more suggestion${recommendations.length === 2 ? "" : "s"}`
-                  : "No other suggestions"}
-              </p>
-              <TextLink href="/report/plan" className="text-[14px]">
-                View your plan <span aria-hidden>→</span>
-              </TextLink>
-            </div>
-          </>
+        <div className="flex flex-wrap items-center justify-between gap-x-6">
+          <h2 id="next-move" className="hg-eyebrow">
+            {recommendations.length > 1 ? `Your next moves · ${recommendations.length}` : "Your next move"}
+          </h2>
+          {recommendations.length > 0 ? (
+            <TextLink href="/report/plan" className="text-[14px]">
+              View your plan <span aria-hidden>→</span>
+            </TextLink>
+          ) : null}
+        </div>
+        {recommendations.length > 0 ? (
+          <ol className="mt-3 flex flex-col gap-3">
+            {recommendations.map((rec, position) => (
+              <li key={rec.id}>
+                <article
+                  className={`rounded-card border bg-surface p-5 md:p-6 ${position === 0 ? "border-accent/40" : "border-line"}`}
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+                    <h3 className="flex gap-3 text-[18px] font-semibold leading-[26px]">
+                      <span className="tabular-nums text-ink-3">{String(position + 1).padStart(2, "0")}</span>
+                      {rec.headline}
+                    </h3>
+                    {position === 0 ? (
+                      <span className="rounded-full bg-accent/15 px-2.5 py-0.5 text-[12px] font-medium leading-[18px] text-accent">
+                        Start here
+                      </span>
+                    ) : null}
+                  </div>
+                  <p className="mt-3 text-ink">{rec.action}.</p>
+                  <p className="mt-1 text-[14px] leading-[22px] text-ink-3">{rec.sessionImpact}</p>
+                  {rec.evidence.length > 0 ? (
+                    <div className="mt-4">
+                      <EvidenceList
+                        compact
+                        items={rec.evidence.filter((item) => item.label === "Photos" || item.label === "Your logs" || item.label === "Trend")}
+                      />
+                    </div>
+                  ) : null}
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-x-6 gap-y-1">
+                    <TextLink href={`/report/plan#${recAnchor(rec.id)}`}>
+                      View suggested change <span aria-hidden>→</span>
+                    </TextLink>
+                    <p className="text-[14px] leading-[22px] text-ink-2">{impactLabel(rec.impact)}</p>
+                  </div>
+                </article>
+              </li>
+            ))}
+          </ol>
         ) : (
           <div className="mt-3 rounded-card border border-line bg-surface p-5 md:p-6">
             <p className="font-medium text-ink">Keep doing what you&apos;re doing.</p>

@@ -1,5 +1,5 @@
 import { registerExercises } from "@/scoring/catalog";
-import type { ExerciseDef, HistorySet, PlannedSet, Split } from "@/scoring/types";
+import type { ExerciseDef, HistorySet, LoggedSession, PlannedSet, Split } from "@/scoring/types";
 import { exerciseDefFromHevy } from "./stimulus";
 import type { HevyExerciseTemplate, HevyRoutine, HevySet, HevyWorkout } from "./types";
 
@@ -76,9 +76,51 @@ export function workoutsToHistory(workouts: HevyWorkout[]): HistorySet[] {
           weightKg: set.weight_kg ?? undefined,
           reps: set.reps ?? undefined,
           type: setType(set.type),
+          workoutId: workout.id,
         });
       }
     }
   }
   return history;
+}
+
+/** Title, date and routine link for each workout, so logged sets can be grouped into sessions. */
+export function workoutsToSessions(workouts: HevyWorkout[]): LoggedSession[] {
+  return workouts.flatMap((workout) => {
+    const date = (workout.start_time ?? workout.end_time ?? "").slice(0, 10);
+    if (!date) return [];
+    return [
+      {
+        id: workout.id,
+        date,
+        title: workout.title ?? "",
+        ...(workout.routine_id ? { routineId: workout.routine_id } : {}),
+      },
+    ];
+  });
+}
+
+/**
+ * Stimulus defs for exercises you logged that aren't in any routine, so
+ * scoring can read every logged set. Registers them like routine exercises.
+ */
+export function loggedExerciseDefs(
+  workouts: HevyWorkout[],
+  templates: HevyExerciseTemplate[],
+  known: ExerciseDef[],
+): ExerciseDef[] {
+  const byId = new Map(templates.map((template) => [template.id, template]));
+  const seen = new Set(known.map((def) => def.id));
+  const defs: ExerciseDef[] = [];
+  for (const workout of workouts) {
+    for (const exercise of workout.exercises ?? []) {
+      const templateId = exercise.exercise_template_id;
+      if (!templateId || seen.has(templateId)) continue;
+      seen.add(templateId);
+      const template = byId.get(templateId);
+      defs.push(exerciseDefFromHevy(template, exercise.title || template?.title || templateId, templateId));
+    }
+  }
+  registerExercises(defs);
+  return defs;
 }

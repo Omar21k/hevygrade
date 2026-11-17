@@ -2,7 +2,7 @@
 
 import { loadHevySession, type HevyPayload } from "@/hevy/session";
 import { subscribeSession } from "@/lib/sessionStore";
-import { registerExercises, type Grade, type LagMap, type Plan, type RegionId, type Split } from "@/scoring";
+import { loggedSplit, registerExercises, type Grade, type LagMap, type Plan, type RegionId, type Split } from "@/scoring";
 import { createContext, useCallback, useContext, useMemo, useSyncExternalStore, type ReactNode } from "react";
 import {
   loadLagOverrides,
@@ -11,6 +11,7 @@ import {
   NO_CHOICES,
   saveLagOverrides,
   savePlanChoices,
+  withCurrentLagRules,
   type PhysiqueResult,
   type PlanChoices,
 } from "./state";
@@ -22,7 +23,9 @@ import {
   type Recommendation,
   type RegionView,
   type ReportDetails,
+  type ScoringInput,
 } from "./view";
+import type { PhysiqueBalance } from "@/physique/balance";
 
 const NO_OVERRIDES: LagMap = {};
 const serverNull = () => null;
@@ -42,6 +45,9 @@ export type ReportData = {
   stories: Record<Metric, MetricStory>;
   details: ReportDetails;
   choices: PlanChoices;
+  /** What the engine grades from, including the photo part of coverage. */
+  scoring: ScoringInput;
+  balance: PhysiqueBalance | null;
 };
 
 export type ReportState =
@@ -63,7 +69,8 @@ export function useSessionReady(): boolean {
 function useReportState(): ReportState & ReportActions {
   const loaded = useSessionReady();
   const hevy = useSyncExternalStore(subscribeSession, loadHevySession, serverNull);
-  const physique = useSyncExternalStore(subscribeSession, loadPhysique, serverNull);
+  const savedPhysique = useSyncExternalStore(subscribeSession, loadPhysique, serverNull);
+  const physique = useMemo(() => withCurrentLagRules(savedPhysique), [savedPhysique]);
   const overrides = useSyncExternalStore(subscribeSession, loadLagOverrides, () => NO_OVERRIDES);
   const choices = useSyncExternalStore(subscribeSession, loadPlanChoices, () => NO_CHOICES);
 
@@ -71,7 +78,8 @@ function useReportState(): ReportState & ReportActions {
   const split = useMemo(() => {
     if (!hevy) return null;
     registerExercises(hevy.exercises ?? []);
-    return hevy.split;
+    // Score what you actually logged; saved routines are context for fixes.
+    return loggedSplit(hevy.split, hevy.history, hevy.sessions);
   }, [hevy]);
 
   const lagMap = useMemo<LagMap>(() => ({ ...(physique?.lagMap ?? {}), ...overrides }), [physique, overrides]);

@@ -6,6 +6,8 @@ import {
   targetsFor,
   type RegionId,
 } from "./regions";
+import { perWeekOf } from "./logged";
+import { round1 } from "./math";
 import type { LagMap, PlannedSet, Split } from "./types";
 
 export function isWorkingSet(set: PlannedSet): boolean {
@@ -19,6 +21,7 @@ export type RegionVolume = {
   frequency: number;
   hasPrimary: boolean;
   planes: Set<string>;
+  /** Days that hit the region; frequency is how many times a week those happen. */
   dayIds: string[];
 };
 
@@ -41,10 +44,19 @@ export function analyzeVolume(split: Split, lagMap: LagMap) {
     return created;
   };
 
-  const sessionWorkingSets: { dayId: string; title: string; workingSets: number; highFatigue: number }[] =
-    [];
+  const sessionWorkingSets: {
+    dayId: string;
+    title: string;
+    workingSets: number;
+    highFatigue: number;
+    perWeek: number;
+  }[] = [];
+  const frequency = new Map<RegionId, number>();
 
   for (const day of split.days) {
+    // Volume is per week, so each day counts as often as it's actually done.
+    const perWeek = perWeekOf(day);
+    if (perWeek <= 0) continue;
     const dayRegions = new Set<RegionId>();
     let workingSets = 0;
     let highFatigue = 0;
@@ -57,9 +69,9 @@ export function analyzeVolume(split: Split, lagMap: LagMap) {
 
       for (const stim of exercise.stimulus) {
         const row = ensure(stim.region);
-        row.effectiveSets += count * stim.weight;
+        row.effectiveSets += count * stim.weight * perWeek;
         if (stim.role === "primary") {
-          row.primarySets += count;
+          row.primarySets += count * perWeek;
           row.hasPrimary = row.hasPrimary || count > 0;
         }
         if (stim.plane) row.planes.add(stim.plane);
@@ -71,7 +83,10 @@ export function analyzeVolume(split: Split, lagMap: LagMap) {
 
     for (const region of dayRegions) {
       const row = ensure(region);
-      if (!row.dayIds.includes(day.id)) row.dayIds.push(day.id);
+      if (!row.dayIds.includes(day.id)) {
+        row.dayIds.push(day.id);
+        frequency.set(region, (frequency.get(region) ?? 0) + perWeek);
+      }
     }
 
     sessionWorkingSets.push({
@@ -79,11 +94,12 @@ export function analyzeVolume(split: Split, lagMap: LagMap) {
       title: day.title,
       workingSets,
       highFatigue,
+      perWeek,
     });
   }
 
   for (const row of byRegion.values()) {
-    row.frequency = row.dayIds.length;
+    row.frequency = round1(frequency.get(row.region) ?? 0);
   }
 
   const scoredRegions = new Set<RegionId>([
@@ -97,7 +113,7 @@ export function analyzeVolume(split: Split, lagMap: LagMap) {
     scoredRegions: REGION_IDS.filter((id) => scoredRegions.has(id)),
     sessionWorkingSets,
     weeklyWorkingSets: sessionWorkingSets.reduce(
-      (sum, session) => sum + session.workingSets,
+      (sum, session) => sum + session.workingSets * session.perWeek,
       0,
     ),
   };

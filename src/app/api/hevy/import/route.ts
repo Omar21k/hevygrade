@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { fetchHevyAccount, HevyApiError } from "@/hevy/client";
-import { routinesToSplit, workoutsToHistory } from "@/hevy/map";
+import { loggedExerciseDefs, routinesToSplit, workoutsToHistory, workoutsToSessions } from "@/hevy/map";
 import { recentHistory } from "@/scoring";
 
 export const runtime = "nodejs";
@@ -22,6 +22,11 @@ export async function POST(request: Request) {
     const { user, routines, templates, workouts, workoutsTruncated } = await fetchHevyAccount(apiKey);
     const { split, unmatched, exercises } = routinesToSplit(routines, templates);
     const fullHistory = workoutsToHistory(workouts);
+    // Only the window progression reads; keeps session storage small for long histories.
+    const history = recentHistory(fullHistory);
+    const recentIds = new Set(history.flatMap((set) => (set.workoutId ? [set.workoutId] : [])));
+    const recentWorkouts = workouts.filter((workout) => recentIds.has(workout.id));
+    const loggedDefs = loggedExerciseDefs(recentWorkouts, templates, exercises);
     const name = user.name ?? user.username ?? "Hevy athlete";
     const dates = workouts
       .map((workout) => (workout.start_time ?? workout.end_time ?? "").slice(0, 10))
@@ -36,9 +41,9 @@ export async function POST(request: Request) {
       firstWorkoutAt: dates[0],
       lastWorkoutAt: dates[dates.length - 1],
       split,
-      exercises,
-      // Only the window progression reads; keeps session storage small for long histories.
-      history: recentHistory(fullHistory),
+      exercises: [...exercises, ...loggedDefs],
+      history,
+      sessions: workoutsToSessions(recentWorkouts),
       unmatched,
       days: split.days.map((day) => ({
         id: day.id,

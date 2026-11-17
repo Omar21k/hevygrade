@@ -168,8 +168,8 @@ function RegionDetails({
           </p>
           <p className="text-[14px] leading-[22px] text-ink-3">
             {row.trainingDays === 0
-              ? "Not trained in any routine"
-              : `Trained on ${row.trainingDays} routine day${row.trainingDays === 1 ? "" : "s"}`}
+              ? "Not trained in what you've done lately"
+              : `Trained about ${formatSets(row.trainingDays)}× a week`}
           </p>
         </div>
       </div>
