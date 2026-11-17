@@ -10,7 +10,6 @@ Hevygrade grades a user's Hevy workout split. It is not a workout generator. It 
 
 Repo: `/Users/omar21k/hevygrade`. Branch `main`. As of this file, `main` is **1 commit ahead of `origin/main`**: `df9f524` (the photo-save fix) has not been pushed.
 
-Do not commit `LLMinds/`. It is an unrelated nested git repo that happens to sit in this working tree.
 
 ## Stack
 

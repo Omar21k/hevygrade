@@ -336,13 +336,19 @@ function candidates(split: Split, grade: Grade): Candidate[] {
         );
       }
 
-      if (primary) {
+      // A swap takes this exercise's sets away from its own muscle, so only offer it
+      // when that muscle has sets to spare: not a priority, and still on target after.
+      const own = primary ? grade.regions.find((r) => r.region === primary) : undefined;
+      const spare =
+        own !== undefined &&
+        own.priority !== "lagging" &&
+        !targetSet.has(own.region) &&
+        own.effectiveSets - count * perWeekOf(day) >= own.targetLow;
+
+      if (primary && spare) {
         for (const row of targets) {
           if (row.region === primary) continue;
           if (REGION_META[row.region].group !== REGION_META[primary].group) continue;
-          if (targetSet.has(primary) && grade.regions.find((r) => r.region === primary)?.priority === "lagging") {
-            continue;
-          }
           for (const option of optionsFor(row.region)) {
             if (Math.abs(FATIGUE_RANK[option.fatigue] - FATIGUE_RANK[def.fatigue]) > 1) continue;
             if (dayHas(split, dayIndex, option.id)) continue;

@@ -161,7 +161,7 @@ export function OverviewView() {
                     <div className="mt-4">
                       <EvidenceList
                         compact
-                        items={rec.evidence.filter((item) => item.label === "Photos" || item.label === "Your logs" || item.label === "Trend")}
+                        items={rec.evidence.filter((item) => item.label === "Photos" || item.label === "Your goal" || item.label === "Your logs" || item.label === "Trend")}
                       />
                     </div>
                   ) : null}

@@ -194,3 +194,22 @@ describe("next moves", () => {
     }
   });
 });
+
+describe("without photos", () => {
+  const skipped: PhysiqueResult = { status: "skipped", lagMap: {}, findings: [], views: [] };
+
+  it("talks about training gaps, never what photos show", () => {
+    const { stories } = report(skipped);
+    expect(stories.coverage.takeaway).not.toMatch(/photos show|in your photos|your photos/i);
+    expect(stories.coverage.takeaway).toMatch(/your logs show/i);
+  });
+
+  it("labels a goal you set as your goal, not photos", () => {
+    const { stories, recommendations } = report(skipped, { chest_upper: "lagging" });
+    expect(stories.coverage.takeaway).toMatch(/upper chest is a priority you set/i);
+    expect(stories.coverage.takeaway).not.toMatch(/photos show|in your photos/i);
+    const labels = recommendations.flatMap((rec) => rec.evidence.map((item) => item.label));
+    expect(labels).not.toContain("Photos");
+    expect(labels).toContain("Your goal");
+  });
+});

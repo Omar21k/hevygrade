@@ -515,7 +515,7 @@ export type Recommendation = {
   evidence: Evidence[];
 };
 
-export type Evidence = { label: "Photos" | "Your logs" | "Trend" | "After" | "Check"; text: string };
+export type Evidence = { label: "Photos" | "Your goal" | "Your logs" | "Trend" | "After" | "Check"; text: string };
 
 function lowerLabel(region: RegionId | undefined): string {
   return region ? REGION_META[region].label.toLowerCase() : "this area";
@@ -736,6 +736,7 @@ function coverageTakeaway(regions: RegionView[], withPhotos: boolean): string {
       : "Your training gives each priority muscle work within its target range.";
   }
   const names = joinNames(lacking.map((row) => row.name.toLowerCase()));
+  if (!withPhotos) return noPhotoTakeaway(lacking);
   const under = lacking.filter((row) => row.verdict === "both");
   const onVolume = lacking.filter((row) => row.verdict === "photo-gap");
   const sentences: string[] = [];
@@ -775,6 +776,28 @@ function coverageTakeaway(regions: RegionView[], withPhotos: boolean): string {
   }
   if (sentences.length === 0) {
     sentences.push(`Your photos show ${names} behind. That's what this report treats as lacking.`);
+  }
+  return sentences.join(" ");
+}
+
+/** Without photos, lacking means training shortfalls and goals you set. Nothing is "in your photos". */
+function noPhotoTakeaway(lacking: RegionView[]): string {
+  const plural = (rows: RegionView[]) => rows.length > 1 || regionVerb(rows[0].id) === "are";
+  const namesOf = (rows: RegionView[]) => joinNames(rows.map((row) => row.name.toLowerCase()));
+  const goals = lacking.filter((row) => row.goalSource === "you");
+  const gaps = lacking.filter((row) => row.goalSource !== "you");
+  const sentences: string[] = [];
+  if (goals.length > 0) {
+    const many = plural(goals);
+    sentences.push(
+      `${capitalize(namesOf(goals))} ${many ? "are priorities" : "is a priority"} you set, and ${many ? "aren't" : "isn't"} getting enough weekly work to match that.`,
+    );
+  }
+  if (gaps.length > 0) {
+    const many = plural(gaps);
+    sentences.push(
+      `Your logs show ${namesOf(gaps)} getting less weekly work than ${many ? "they need" : "it needs"}. Add photos to see whether ${many ? "they actually look" : "it actually looks"} behind.`,
+    );
   }
   return sentences.join(" ");
 }
@@ -1026,7 +1049,7 @@ function evidenceFor(
     const development = balance?.developments[region];
     const note = physique?.assessment?.developments.find((row) => row.region === region)?.note;
     if (view.goalSource === "you") {
-      evidence.push({ label: "Photos", text: `You set ${view.name.toLowerCase()} as a priority yourself.` });
+      evidence.push({ label: "Your goal", text: `You set ${view.name.toLowerCase()} as a priority yourself.` });
     } else if (development !== undefined && balance) {
       evidence.push({
         label: "Photos",

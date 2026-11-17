@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { fixtures } from "./fixtures";
+import { getExercise } from "./catalog";
 import { gradeSplit } from "./score";
 import { applyChanges, balanceScore, buildPlan, snapshot } from "./suggest";
 
@@ -77,5 +78,31 @@ describe("buildPlan", () => {
     const before = JSON.stringify(split);
     buildPlan({ split, lagMap: { brachialis: "lagging" } });
     expect(JSON.stringify(split)).toBe(before);
+  });
+});
+
+describe("swaps", () => {
+  it("never take sets from a muscle that is under its own target", () => {
+    const lagMaps = [{}, { chest_upper: "lagging" as const }, { brachialis: "lagging" as const }, { lats: "lagging" as const }];
+    let swaps = 0;
+    for (const split of Object.values(fixtures)) {
+      for (const lagMap of lagMaps) {
+        const input = { split, lagMap };
+        const before = gradeSplit(input);
+        const plan = buildPlan(input);
+        const after = gradeSplit({ ...input, split: applyChanges(split, plan.steps.flatMap((step) => (step.change ? [step.change] : []))) });
+        for (const step of plan.steps) {
+          if (step.change?.op !== "swap") continue;
+          swaps += 1;
+          const def = getExercise(step.change.fromId);
+          const own = def.stimulus.find((stim) => stim.role === "primary")!.region;
+          const was = before.regions.find((row) => row.region === own)!;
+          const now = after.regions.find((row) => row.region === own)!;
+          expect(was.priority).not.toBe("lagging");
+          expect(now.effectiveSets).toBeGreaterThanOrEqual(Math.min(was.effectiveSets, now.targetLow));
+        }
+      }
+    }
+    expect(swaps).toBeGreaterThan(0);
   });
 });
